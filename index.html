@@ -1,0 +1,948 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0">
+<title>DAX Scanner</title>
+<script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
+<style>
+  :root {
+    --bg:       #0a0e17;
+    --surface:  #111827;
+    --border:   #1e2d40;
+    --accent:   #3b82f6;
+    --accent2:  #06b6d4;
+    --green:    #22c55e;
+    --red:      #ef4444;
+    --text:     #e2e8f0;
+    --muted:    #64748b;
+    --card:     #131c2e;
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    background: var(--bg);
+    color: var(--text);
+    font-family: 'SF Pro Display', -apple-system, BlinkMacSystemFont, sans-serif;
+    min-height: 100vh;
+    overflow-x: hidden;
+  }
+
+  /* ── Header ── */
+  header {
+    position: sticky;
+    top: 0;
+    z-index: 100;
+    background: rgba(10,14,23,0.92);
+    backdrop-filter: blur(12px);
+    border-bottom: 1px solid var(--border);
+    padding: 14px 16px 10px;
+  }
+
+  .header-top {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 10px;
+  }
+
+  .logo {
+    font-size: 18px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+  }
+
+  .status-dot {
+    width: 8px; height: 8px;
+    border-radius: 50%;
+    background: var(--muted);
+    display: inline-block;
+    margin-right: 6px;
+    transition: background 0.3s;
+  }
+  .status-dot.live { background: var(--green); box-shadow: 0 0 6px var(--green); }
+  .status-dot.loading { background: var(--accent); animation: pulse 1s infinite; }
+
+  @keyframes pulse { 0%,100% { opacity:1; } 50% { opacity:0.3; } }
+
+  .status-text { font-size: 12px; color: var(--muted); }
+
+  /* ── Load Button ── */
+  .load-btn {
+    width: 100%;
+    padding: 13px;
+    background: linear-gradient(135deg, var(--accent), var(--accent2));
+    border: none;
+    border-radius: 12px;
+    color: #fff;
+    font-size: 15px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: opacity 0.2s, transform 0.1s;
+    -webkit-tap-highlight-color: transparent;
+  }
+  .load-btn:active { transform: scale(0.98); opacity: 0.85; }
+  .load-btn:disabled { opacity: 0.4; cursor: default; }
+
+  /* ── Progress ── */
+  .progress-wrap {
+    margin-top: 10px;
+    display: none;
+  }
+  .progress-wrap.visible { display: block; }
+  .progress-bar-bg {
+    background: var(--border);
+    border-radius: 4px;
+    height: 4px;
+    overflow: hidden;
+  }
+  .progress-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, var(--accent), var(--accent2));
+    border-radius: 4px;
+    transition: width 0.3s;
+    width: 0%;
+  }
+  .progress-label {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 5px;
+    text-align: center;
+  }
+
+  /* ── Filter Bar ── */
+  .filter-section {
+    padding: 12px 16px;
+    border-bottom: 1px solid var(--border);
+    display: none;
+  }
+  .filter-section.visible { display: block; }
+
+  .filter-title {
+    font-size: 11px;
+    color: var(--muted);
+    text-transform: uppercase;
+    letter-spacing: 1px;
+    margin-bottom: 8px;
+  }
+
+  .filter-chips {
+    display: flex;
+    gap: 8px;
+    flex-wrap: wrap;
+    margin-bottom: 10px;
+  }
+
+  .chip {
+    padding: 6px 12px;
+    border-radius: 20px;
+    border: 1px solid var(--border);
+    background: var(--surface);
+    color: var(--muted);
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    -webkit-tap-highlight-color: transparent;
+    white-space: nowrap;
+  }
+  .chip.active {
+    border-color: var(--accent);
+    background: rgba(59,130,246,0.15);
+    color: var(--accent);
+  }
+
+  .custom-filter-row {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+    margin-top: 8px;
+  }
+
+  .filter-input {
+    flex: 1;
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 8px;
+    padding: 8px 10px;
+    color: var(--text);
+    font-size: 13px;
+    outline: none;
+  }
+  .filter-input:focus { border-color: var(--accent); }
+  .filter-input::placeholder { color: var(--muted); }
+
+  .apply-btn {
+    padding: 8px 14px;
+    background: var(--accent);
+    border: none;
+    border-radius: 8px;
+    color: #fff;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    white-space: nowrap;
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  .filter-hint {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 6px;
+    line-height: 1.5;
+  }
+  .filter-hint code {
+    background: var(--surface);
+    padding: 1px 4px;
+    border-radius: 3px;
+    font-family: monospace;
+    color: var(--accent2);
+  }
+
+  /* ── Summary Bar ── */
+  .summary-bar {
+    padding: 8px 16px;
+    display: none;
+    align-items: center;
+    justify-content: space-between;
+    border-bottom: 1px solid var(--border);
+  }
+  .summary-bar.visible { display: flex; }
+  .summary-count { font-size: 13px; color: var(--muted); }
+  .summary-count span { color: var(--text); font-weight: 600; }
+
+  .sort-select {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 6px;
+    color: var(--text);
+    font-size: 12px;
+    padding: 4px 8px;
+    outline: none;
+  }
+
+  /* ── Cards Grid ── */
+  .cards-grid {
+    padding: 12px 12px 40px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+  }
+
+  .stock-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 16px;
+    overflow: hidden;
+    transition: border-color 0.2s;
+  }
+  .stock-card:active { border-color: var(--accent); }
+
+  .card-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: flex-start;
+    padding: 12px 14px 8px;
+  }
+
+  .stock-name {
+    font-size: 15px;
+    font-weight: 700;
+    letter-spacing: -0.3px;
+  }
+  .stock-symbol {
+    font-size: 11px;
+    color: var(--muted);
+    margin-top: 2px;
+  }
+
+  .price-block { text-align: right; }
+  .price-current {
+    font-size: 16px;
+    font-weight: 700;
+    font-variant-numeric: tabular-nums;
+  }
+  .price-change {
+    font-size: 12px;
+    font-weight: 600;
+    margin-top: 2px;
+  }
+  .up { color: var(--green); }
+  .down { color: var(--red); }
+
+  .card-stats {
+    display: flex;
+    gap: 0;
+    padding: 0 14px 8px;
+  }
+  .stat {
+    flex: 1;
+    text-align: center;
+  }
+  .stat-label { font-size: 10px; color: var(--muted); text-transform: uppercase; letter-spacing: 0.5px; }
+  .stat-value { font-size: 12px; font-weight: 600; margin-top: 2px; font-variant-numeric: tabular-nums; }
+
+  .chart-container {
+    height: 180px;
+    position: relative;
+  }
+
+  /* ── Empty / Error States ── */
+  .empty-state {
+    text-align: center;
+    padding: 60px 20px;
+    color: var(--muted);
+  }
+  .empty-icon { font-size: 40px; margin-bottom: 12px; }
+  .empty-title { font-size: 16px; font-weight: 600; color: var(--text); margin-bottom: 6px; }
+  .empty-sub { font-size: 13px; line-height: 1.5; }
+
+  .error-msg {
+    background: rgba(239,68,68,0.1);
+    border: 1px solid rgba(239,68,68,0.3);
+    border-radius: 10px;
+    padding: 12px;
+    font-size: 13px;
+    color: #fca5a5;
+    margin: 12px 16px;
+    display: none;
+  }
+  .error-msg.visible { display: block; }
+
+  /* ── Modal / Detail ── */
+  .modal-overlay {
+    position: fixed;
+    inset: 0;
+    background: rgba(0,0,0,0.7);
+    z-index: 200;
+    display: none;
+    backdrop-filter: blur(4px);
+  }
+  .modal-overlay.visible { display: flex; align-items: flex-end; }
+
+  .modal-sheet {
+    background: var(--surface);
+    border-radius: 20px 20px 0 0;
+    width: 100%;
+    max-height: 85vh;
+    overflow-y: auto;
+    border-top: 1px solid var(--border);
+    padding-bottom: 40px;
+  }
+
+  .modal-handle {
+    width: 36px; height: 4px;
+    background: var(--border);
+    border-radius: 2px;
+    margin: 12px auto 16px;
+  }
+
+  .modal-title {
+    font-size: 20px;
+    font-weight: 700;
+    padding: 0 16px 4px;
+  }
+  .modal-symbol { font-size: 13px; color: var(--muted); padding: 0 16px 16px; }
+
+  .modal-chart { height: 250px; }
+
+  .modal-stats-grid {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 10px;
+    padding: 16px;
+  }
+
+  .modal-stat-card {
+    background: var(--card);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 10px 12px;
+  }
+  .modal-stat-label { font-size: 11px; color: var(--muted); }
+  .modal-stat-value { font-size: 16px; font-weight: 700; margin-top: 4px; font-variant-numeric: tabular-nums; }
+
+  .modal-close {
+    position: absolute;
+    top: 16px;
+    right: 16px;
+    width: 32px; height: 32px;
+    border-radius: 50%;
+    background: var(--border);
+    border: none;
+    color: var(--text);
+    font-size: 18px;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+  }
+</style>
+</head>
+<body>
+
+<header>
+  <div class="header-top">
+    <div class="logo">DAX Scanner</div>
+    <div>
+      <span class="status-dot" id="statusDot"></span>
+      <span class="status-text" id="statusText">Bereit</span>
+    </div>
+  </div>
+  <button class="load-btn" id="loadBtn" onclick="loadAllData()">
+    DAX Daten laden
+  </button>
+  <div class="progress-wrap" id="progressWrap">
+    <div class="progress-bar-bg">
+      <div class="progress-bar-fill" id="progressFill"></div>
+    </div>
+    <div class="progress-label" id="progressLabel">Lade Daten…</div>
+  </div>
+</header>
+
+<div class="filter-section" id="filterSection">
+  <div class="filter-title">Filter</div>
+  <div class="filter-chips">
+    <div class="chip active" onclick="setFilter('all', this)">Alle</div>
+    <div class="chip" onclick="setFilter('above_ma50', this)">Über MA50</div>
+    <div class="chip" onclick="setFilter('below_ma50', this)">Unter MA50</div>
+    <div class="chip" onclick="setFilter('near_high', this)">52W-Hoch</div>
+    <div class="chip" onclick="setFilter('near_low', this)">52W-Tief</div>
+    <div class="chip" onclick="setFilter('strong_up', this)">+5% (30T)</div>
+    <div class="chip" onclick="setFilter('strong_down', this)">-5% (30T)</div>
+  </div>
+
+  <div class="custom-filter-row">
+    <input class="filter-input" id="customFilterInput"
+      placeholder="z.B. close > ma20 && rsi < 40"
+      autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
+    <button class="apply-btn" onclick="applyCustomFilter()">Anwenden</button>
+  </div>
+  <div class="filter-hint">
+    Variablen: <code>close</code> <code>open</code> <code>high</code> <code>low</code>
+    <code>volume</code> <code>ma20</code> <code>ma50</code> <code>ma200</code>
+    <code>rsi</code> <code>change1d</code> <code>change30d</code> <code>high52w</code> <code>low52w</code>
+  </div>
+</div>
+
+<div class="summary-bar" id="summaryBar">
+  <div class="summary-count"><span id="resultCount">0</span> Aktien</div>
+  <select class="sort-select" onchange="sortResults(this.value)">
+    <option value="name">A–Z</option>
+    <option value="change1d_desc">Beste heute</option>
+    <option value="change1d_asc">Schlechteste heute</option>
+    <option value="change30d_desc">Beste 30T</option>
+    <option value="rsi_asc">RSI niedrig</option>
+    <option value="rsi_desc">RSI hoch</option>
+  </select>
+</div>
+
+<div class="error-msg" id="errorMsg"></div>
+
+<div class="cards-grid" id="cardsGrid">
+  <div class="empty-state">
+    <div class="empty-icon">📈</div>
+    <div class="empty-title">DAX Scanner</div>
+    <div class="empty-sub">Lade alle 40 DAX-Aktien mit einem Klick.<br>Kursdaten der letzten 12 Monate.</div>
+  </div>
+</div>
+
+<!-- Detail Modal -->
+<div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
+  <div class="modal-sheet" id="modalSheet">
+    <div class="modal-handle"></div>
+    <div class="modal-title" id="modalTitle"></div>
+    <div class="modal-symbol" id="modalSymbol"></div>
+    <div class="modal-chart" id="modalChart"></div>
+    <div class="modal-stats-grid" id="modalStats"></div>
+  </div>
+</div>
+
+<script>
+// ── DAX 40 Symbole ──────────────────────────────────────────────────────────
+const DAX = [
+  { symbol: 'ADS.DE',  name: 'Adidas' },
+  { symbol: 'AIR.DE',  name: 'Airbus' },
+  { symbol: 'ALV.DE',  name: 'Allianz' },
+  { symbol: 'BAS.DE',  name: 'BASF' },
+  { symbol: 'BAYN.DE', name: 'Bayer' },
+  { symbol: 'BEI.DE',  name: 'Beiersdorf' },
+  { symbol: 'BMW.DE',  name: 'BMW' },
+  { symbol: 'BNR.DE',  name: 'Brenntag' },
+  { symbol: 'CBK.DE',  name: 'Commerzbank' },
+  { symbol: 'CON.DE',  name: 'Continental' },
+  { symbol: 'DB1.DE',  name: 'Deutsche Börse' },
+  { symbol: 'DBK.DE',  name: 'Deutsche Bank' },
+  { symbol: 'DHL.DE',  name: 'DHL Group' },
+  { symbol: 'DTE.DE',  name: 'Deutsche Telekom' },
+  { symbol: 'DHER.DE', name: 'Delivery Hero' },
+  { symbol: 'ENR.DE',  name: 'Siemens Energy' },
+  { symbol: 'EOAN.DE', name: 'E.ON' },
+  { symbol: 'FME.DE',  name: 'Fresenius Medical' },
+  { symbol: 'FRE.DE',  name: 'Fresenius' },
+  { symbol: 'HEI.DE',  name: 'Heidelberg Mat.' },
+  { symbol: 'HEN3.DE', name: 'Henkel' },
+  { symbol: 'HOT.DE',  name: 'Hugo Boss' },
+  { symbol: 'IFX.DE',  name: 'Infineon' },
+  { symbol: 'LIN.DE',  name: 'Linde' },
+  { symbol: 'MBG.DE',  name: 'Mercedes-Benz' },
+  { symbol: 'MRK.DE',  name: 'Merck' },
+  { symbol: 'MTX.DE',  name: 'MTU Aero' },
+  { symbol: 'MUV2.DE', name: 'Munich Re' },
+  { symbol: 'PAH3.DE', name: 'Porsche Holding' },
+  { symbol: 'PICK.DE', name: 'Porsche AG' },
+  { symbol: 'P911.DE', name: 'Porsche' },
+  { symbol: 'QIA.DE',  name: 'Qiagen' },
+  { symbol: 'RHM.DE',  name: 'Rheinmetall' },
+  { symbol: 'RWE.DE',  name: 'RWE' },
+  { symbol: 'SAP.DE',  name: 'SAP' },
+  { symbol: 'SHL.DE',  name: 'Siemens Healthineers' },
+  { symbol: 'SIE.DE',  name: 'Siemens' },
+  { symbol: 'SY1.DE',  name: 'Symrise' },
+  { symbol: 'VNA.DE',  name: 'Vonovia' },
+  { symbol: 'VOW3.DE', name: 'Volkswagen' },
+];
+
+// ── State ───────────────────────────────────────────────────────────────────
+let stockData = {};        // { symbol: { candles, metrics } }
+let filteredSymbols = [];
+let activeFilter = 'all';
+let activeCharts = {};     // chart instances by symbol
+let modalChart = null;
+
+const PROXY = 'https://corsproxy.io/?';
+const CACHE_KEY = 'dax_scanner_v2';
+const CACHE_TS_KEY = 'dax_scanner_ts_v2';
+
+// ── Helpers ─────────────────────────────────────────────────────────────────
+function fmt(n, d=2) { return n != null ? n.toFixed(d) : '–'; }
+function fmtK(n) {
+  if (n == null) return '–';
+  if (n > 1e9) return (n/1e9).toFixed(1)+'B';
+  if (n > 1e6) return (n/1e6).toFixed(1)+'M';
+  return n.toLocaleString('de-DE');
+}
+
+function calcMA(closes, period) {
+  if (closes.length < period) return null;
+  const slice = closes.slice(-period);
+  return slice.reduce((a,b)=>a+b,0)/period;
+}
+
+function calcRSI(closes, period=14) {
+  if (closes.length < period+1) return null;
+  let gains=0, losses=0;
+  for (let i=closes.length-period; i<closes.length; i++) {
+    const diff = closes[i]-closes[i-1];
+    if (diff>0) gains+=diff; else losses+=Math.abs(diff);
+  }
+  if (losses===0) return 100;
+  const rs = (gains/period)/(losses/period);
+  return 100-(100/(1+rs));
+}
+
+function computeMetrics(candles) {
+  const closes = candles.map(c=>c.close);
+  const highs   = candles.map(c=>c.high);
+  const lows    = candles.map(c=>c.low);
+  const last    = closes[closes.length-1];
+  const prev    = closes[closes.length-2] ?? last;
+  const c30     = closes[Math.max(0,closes.length-31)];
+  return {
+    close:    last,
+    open:     candles[candles.length-1].open,
+    high:     candles[candles.length-1].high,
+    low:      candles[candles.length-1].low,
+    volume:   candles[candles.length-1].volume,
+    change1d: ((last-prev)/prev)*100,
+    change30d:((last-c30)/c30)*100,
+    ma20:     calcMA(closes,20),
+    ma50:     calcMA(closes,50),
+    ma200:    calcMA(closes,200),
+    rsi:      calcRSI(closes,14),
+    high52w:  Math.max(...highs),
+    low52w:   Math.min(...lows),
+  };
+}
+
+// ── Data Loading ─────────────────────────────────────────────────────────────
+async function fetchCandles(symbol) {
+  const end   = Math.floor(Date.now()/1000);
+  const start = end - 365*24*3600;
+  const url   = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&period1=${start}&period2=${end}`;
+  const res   = await fetch(PROXY + encodeURIComponent(url), { signal: AbortSignal.timeout(10000) });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  const result = json?.chart?.result?.[0];
+  if (!result) throw new Error('Keine Daten');
+  const ts     = result.timestamp;
+  const q      = result.indicators.quote[0];
+  const candles = ts.map((t,i)=>({
+    time:   t,
+    open:   q.open[i],
+    high:   q.high[i],
+    low:    q.low[i],
+    close:  q.close[i],
+    volume: q.volume[i],
+  })).filter(c=>c.open&&c.high&&c.low&&c.close);
+  return candles;
+}
+
+async function loadAllData() {
+  const btn = document.getElementById('loadBtn');
+  btn.disabled = true;
+  setStatus('loading', 'Lade…');
+  showProgress(true);
+  document.getElementById('errorMsg').classList.remove('visible');
+  document.getElementById('cardsGrid').innerHTML = '';
+
+  const errors = [];
+  for (let i=0; i<DAX.length; i++) {
+    const { symbol, name } = DAX[i];
+    updateProgress(i, DAX.length, `${name} (${i+1}/${DAX.length})`);
+    try {
+      const candles = await fetchCandles(symbol);
+      const metrics = computeMetrics(candles);
+      stockData[symbol] = { candles, metrics, name };
+    } catch(e) {
+      errors.push(symbol);
+    }
+    await new Promise(r=>setTimeout(r,120)); // Rate-limit-Schutz
+  }
+
+  // Cache speichern
+  try {
+    localStorage.setItem(CACHE_KEY, JSON.stringify(stockData));
+    localStorage.setItem(CACHE_TS_KEY, Date.now().toString());
+  } catch(e) {}
+
+  showProgress(false);
+  btn.disabled = false;
+
+  if (errors.length) {
+    const e = document.getElementById('errorMsg');
+    e.textContent = `Fehler bei: ${errors.join(', ')} – möglicherweise Proxy-Problem, einfach erneut laden.`;
+    e.classList.add('visible');
+  }
+
+  if (Object.keys(stockData).length > 0) {
+    setStatus('live', `${Object.keys(stockData).length} Aktien geladen`);
+    document.getElementById('filterSection').classList.add('visible');
+    applyCurrentFilter();
+  } else {
+    setStatus('', 'Fehler');
+    document.getElementById('cardsGrid').innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">⚠️</div>
+        <div class="empty-title">Laden fehlgeschlagen</div>
+        <div class="empty-sub">Proxy nicht erreichbar. Bitte nochmal versuchen.</div>
+      </div>`;
+  }
+}
+
+// ── Progress / Status ────────────────────────────────────────────────────────
+function updateProgress(i, total, label) {
+  const pct = Math.round((i/total)*100);
+  document.getElementById('progressFill').style.width = pct+'%';
+  document.getElementById('progressLabel').textContent = label;
+}
+function showProgress(v) {
+  document.getElementById('progressWrap').classList.toggle('visible',v);
+}
+function setStatus(type, text) {
+  const dot = document.getElementById('statusDot');
+  dot.className = 'status-dot' + (type ? ' '+type : '');
+  document.getElementById('statusText').textContent = text;
+}
+
+// ── Filters ──────────────────────────────────────────────────────────────────
+function setFilter(key, el) {
+  activeFilter = key;
+  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
+  el.classList.add('active');
+  document.getElementById('customFilterInput').value = '';
+  applyCurrentFilter();
+}
+
+function applyCurrentFilter() {
+  const all = Object.keys(stockData);
+  if (!all.length) return;
+
+  filteredSymbols = all.filter(sym=>{
+    const m = stockData[sym].metrics;
+    switch(activeFilter) {
+      case 'all':        return true;
+      case 'above_ma50': return m.ma50  && m.close > m.ma50;
+      case 'below_ma50': return m.ma50  && m.close < m.ma50;
+      case 'near_high':  return m.high52w && (m.close >= m.high52w * 0.97);
+      case 'near_low':   return m.low52w  && (m.close <= m.low52w  * 1.03);
+      case 'strong_up':  return m.change30d > 5;
+      case 'strong_down':return m.change30d < -5;
+      default:           return true;
+    }
+  });
+
+  renderCards();
+}
+
+function applyCustomFilter() {
+  const expr = document.getElementById('customFilterInput').value.trim();
+  if (!expr) return;
+  // Preset-Chips deaktivieren
+  document.querySelectorAll('.chip').forEach(c=>c.classList.remove('active'));
+  activeFilter = 'custom';
+
+  const all = Object.keys(stockData);
+  filteredSymbols = all.filter(sym=>{
+    const m = stockData[sym].metrics;
+    try {
+      const fn = new Function(
+        'close','open','high','low','volume',
+        'ma20','ma50','ma200','rsi',
+        'change1d','change30d','high52w','low52w',
+        `return !!(${expr})`
+      );
+      return fn(m.close,m.open,m.high,m.low,m.volume,
+                m.ma20,m.ma50,m.ma200,m.rsi,
+                m.change1d,m.change30d,m.high52w,m.low52w);
+    } catch(e) { return false; }
+  });
+
+  renderCards();
+}
+
+function sortResults(key) {
+  const dir = key.endsWith('_desc') ? -1 : 1;
+  const field = key.replace('_desc','').replace('_asc','');
+  filteredSymbols.sort((a,b)=>{
+    if (field === 'name') return stockData[a].name.localeCompare(stockData[b].name);
+    const ma = stockData[a].metrics[field] ?? 0;
+    const mb = stockData[b].metrics[field] ?? 0;
+    return (ma-mb)*dir;
+  });
+  renderCards();
+}
+
+// ── Render Cards ─────────────────────────────────────────────────────────────
+function renderCards() {
+  // Destroy old chart instances
+  Object.values(activeCharts).forEach(c=>{ try{c.remove()}catch(e){} });
+  activeCharts = {};
+
+  const grid = document.getElementById('cardsGrid');
+
+  document.getElementById('resultCount').textContent = filteredSymbols.length;
+  document.getElementById('summaryBar').classList.add('visible');
+
+  if (!filteredSymbols.length) {
+    grid.innerHTML = `
+      <div class="empty-state">
+        <div class="empty-icon">🔍</div>
+        <div class="empty-title">Keine Treffer</div>
+        <div class="empty-sub">Kein DAX-Wert erfüllt diesen Filter.</div>
+      </div>`;
+    return;
+  }
+
+  grid.innerHTML = filteredSymbols.map(sym=>{
+    const { name, metrics: m } = stockData[sym];
+    const chg1d  = m.change1d  ?? 0;
+    const chg30d = m.change30d ?? 0;
+    const cls1d  = chg1d  >= 0 ? 'up' : 'down';
+    const cls30d = chg30d >= 0 ? 'up' : 'down';
+    return `
+      <div class="stock-card" onclick="openModal('${sym}')">
+        <div class="card-header">
+          <div>
+            <div class="stock-name">${name}</div>
+            <div class="stock-symbol">${sym}</div>
+          </div>
+          <div class="price-block">
+            <div class="price-current">${fmt(m.close)} €</div>
+            <div class="price-change ${cls1d}">${chg1d>=0?'+':''}${fmt(chg1d)}%</div>
+          </div>
+        </div>
+        <div class="card-stats">
+          <div class="stat">
+            <div class="stat-label">30T</div>
+            <div class="stat-value ${cls30d}">${chg30d>=0?'+':''}${fmt(chg30d)}%</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">RSI</div>
+            <div class="stat-value">${m.rsi ? fmt(m.rsi,0) : '–'}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">MA50</div>
+            <div class="stat-value">${fmt(m.ma50)}</div>
+          </div>
+          <div class="stat">
+            <div class="stat-label">Vol</div>
+            <div class="stat-value">${fmtK(m.volume)}</div>
+          </div>
+        </div>
+        <div class="chart-container" id="chart-${sym}"></div>
+      </div>`;
+  }).join('');
+
+  // Render mini charts after DOM update
+  requestAnimationFrame(()=>{
+    filteredSymbols.forEach(sym=>renderMiniChart(sym));
+  });
+}
+
+// ── Mini Charts ──────────────────────────────────────────────────────────────
+function renderMiniChart(sym) {
+  const el = document.getElementById(`chart-${sym}`);
+  if (!el) return;
+  const candles = stockData[sym].candles;
+  const m = stockData[sym].metrics;
+
+  const chart = LightweightCharts.createChart(el, {
+    width: el.clientWidth,
+    height: 180,
+    layout: { background:{color:'transparent'}, textColor:'#64748b' },
+    grid: { vertLines:{visible:false}, horzLines:{color:'#1e2d40'} },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
+    rightPriceScale: { borderVisible:false, scaleMargins:{top:0.1,bottom:0.1} },
+    timeScale: { borderVisible:false, timeVisible:false },
+    handleScroll: false,
+    handleScale: false,
+  });
+
+  const series = chart.addCandlestickSeries({
+    upColor:'#22c55e', downColor:'#ef4444',
+    borderUpColor:'#22c55e', borderDownColor:'#ef4444',
+    wickUpColor:'#22c55e', wickDownColor:'#ef4444',
+  });
+
+  const data = candles.map(c=>({
+    time: c.time,
+    open: c.open, high: c.high, low: c.low, close: c.close,
+  }));
+  series.setData(data);
+
+  // MA50 Linie
+  if (m.ma50) {
+    const maLine = chart.addLineSeries({ color:'#3b82f6', lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+    const maData = [];
+    const closes = candles.map(c=>c.close);
+    for (let i=49; i<candles.length; i++) {
+      const avg = closes.slice(i-49,i+1).reduce((a,b)=>a+b,0)/50;
+      maData.push({ time: candles[i].time, value: avg });
+    }
+    maLine.setData(maData);
+  }
+
+  chart.timeScale().fitContent();
+  activeCharts[sym] = chart;
+}
+
+// ── Modal / Detail View ───────────────────────────────────────────────────────
+function openModal(sym) {
+  const { name, candles, metrics: m } = stockData[sym];
+  document.getElementById('modalTitle').textContent  = name;
+  document.getElementById('modalSymbol').textContent = `${sym} · Letztes Jahr`;
+
+  // Modal-Chart
+  const el = document.getElementById('modalChart');
+  el.innerHTML = '';
+  if (modalChart) { try{modalChart.remove()}catch(e){} }
+
+  const chart = LightweightCharts.createChart(el, {
+    width: el.clientWidth || window.innerWidth,
+    height: 250,
+    layout: { background:{color:'transparent'}, textColor:'#64748b' },
+    grid: { vertLines:{visible:false}, horzLines:{color:'#1e2d40'} },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
+    rightPriceScale: { borderVisible:false },
+    timeScale: { borderVisible:false, timeVisible:true },
+  });
+
+  const cs = chart.addCandlestickSeries({
+    upColor:'#22c55e', downColor:'#ef4444',
+    borderUpColor:'#22c55e', borderDownColor:'#ef4444',
+    wickUpColor:'#22c55e', wickDownColor:'#ef4444',
+  });
+  cs.setData(candles.map(c=>({ time:c.time, open:c.open, high:c.high, low:c.low, close:c.close })));
+
+  // MA20, MA50, MA200
+  const closes = candles.map(c=>c.close);
+  [[20,'#06b6d4'],[50,'#3b82f6'],[200,'#a855f7']].forEach(([p,col])=>{
+    if (closes.length < p) return;
+    const ln = chart.addLineSeries({ color:col, lineWidth:1, priceLineVisible:false, lastValueVisible:false });
+    const d = [];
+    for (let i=p-1; i<candles.length; i++) {
+      const avg = closes.slice(i-p+1,i+1).reduce((a,b)=>a+b,0)/p;
+      d.push({ time: candles[i].time, value: avg });
+    }
+    ln.setData(d);
+  });
+
+  chart.timeScale().fitContent();
+  modalChart = chart;
+
+  // Stats
+  const chg1d  = m.change1d  ?? 0;
+  const chg30d = m.change30d ?? 0;
+  const cls1   = chg1d  >= 0 ? 'up' : 'down';
+  const cls30  = chg30d >= 0 ? 'up' : 'down';
+  document.getElementById('modalStats').innerHTML = [
+    ['Kurs',     `${fmt(m.close)} €`,              ''],
+    ['1T Perf.', `${chg1d>=0?'+':''}${fmt(chg1d)}%`, cls1],
+    ['30T Perf.',`${chg30d>=0?'+':''}${fmt(chg30d)}%`,cls30],
+    ['RSI (14)', m.rsi ? fmt(m.rsi,1) : '–',      ''],
+    ['MA 20',   `${fmt(m.ma20)} €`,                ''],
+    ['MA 50',   `${fmt(m.ma50)} €`,                ''],
+    ['MA 200',  `${fmt(m.ma200)} €`,               ''],
+    ['Volumen',  fmtK(m.volume),                   ''],
+    ['52W Hoch', `${fmt(m.high52w)} €`,            ''],
+    ['52W Tief', `${fmt(m.low52w)} €`,             ''],
+  ].map(([l,v,c])=>`
+    <div class="modal-stat-card">
+      <div class="modal-stat-label">${l}</div>
+      <div class="modal-stat-value ${c}">${v}</div>
+    </div>`).join('');
+
+  document.getElementById('modalOverlay').classList.add('visible');
+}
+
+function closeModal(e) {
+  if (e.target === document.getElementById('modalOverlay')) {
+    document.getElementById('modalOverlay').classList.remove('visible');
+  }
+}
+
+// ── Cache laden beim Start ───────────────────────────────────────────────────
+(function loadCache() {
+  try {
+    const ts   = parseInt(localStorage.getItem(CACHE_TS_KEY)||'0');
+    const age  = (Date.now()-ts)/1000/3600; // Stunden
+    if (age < 8) {
+      const raw = localStorage.getItem(CACHE_KEY);
+      if (raw) {
+        stockData = JSON.parse(raw);
+        const n = Object.keys(stockData).length;
+        if (n > 0) {
+          setStatus('live', `${n} Aktien (Cache)`);
+          document.getElementById('loadBtn').textContent = 'Daten aktualisieren';
+          document.getElementById('filterSection').classList.add('visible');
+          applyCurrentFilter();
+        }
+      }
+    }
+  } catch(e) {}
+})();
+
+// Resize handler
+window.addEventListener('resize', ()=>{
+  Object.entries(activeCharts).forEach(([sym,chart])=>{
+    const el = document.getElementById(`chart-${sym}`);
+    if (el) chart.applyOptions({ width: el.clientWidth });
+  });
+});
+</script>
+</body>
+</html>
