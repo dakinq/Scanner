@@ -852,13 +852,47 @@ window.doLogout = () => signOut(auth);
 // ── Firestore ─────────────────────────────────────────────────────────────────
 async function saveToFirestore(symbol, candles, metrics) {
   if (!currentUser) return;
-  await setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), {
+  const data = {
     name: ALL_STOCKS[symbol]?.name ?? symbol,
     indices: ALL_STOCKS[symbol]?.indices ?? [],
     lastUpdated: Date.now(),
     metrics,
     candles: candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume])
-  });
+  };
+  // Try up to 3 times
+  for (let attempt = 0; attempt < 3; attempt++) {
+    try {
+      await setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), data);
+      // Also save checkpoint to localStorage
+      try {
+        const key = 'ckpt_' + symbol;
+        localStorage.setItem(key, JSON.stringify({
+          lastUpdated: data.lastUpdated,
+          metrics,
+          candles: data.candles.slice(-10) // just last 10 candles as timestamp ref
+        }));
+      } catch(e) {}
+      return;
+    } catch(e) {
+      if (attempt === 2) console.warn('Firestore save failed:', symbol, e);
+      await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
+    }
+  }
+}
+
+// Save progress checkpoint to localStorage so we can resume
+function saveCheckpoint(symbol, lastUpdated) {
+  try {
+    const existing = JSON.parse(localStorage.getItem('load_progress') || '{}');
+    existing[symbol] = lastUpdated;
+    localStorage.setItem('load_progress', JSON.stringify(existing));
+  } catch(e) {}
+}
+
+function loadCheckpoint() {
+  try {
+    return JSON.parse(localStorage.getItem('load_progress') || '{}');
+  } catch(e) { return {}; }
 }
 
 async function loadFromFirestore() {
@@ -866,31 +900,55 @@ async function loadFromFirestore() {
   setStatus('loading','Lade gespeicherte Daten...');
   try {
     const snap = await getDocs(collection(db,'users',currentUser.uid,'stocks'));
+    let loaded = 0;
     snap.forEach(d => {
       const raw = d.data();
+      if (!raw.candles || !raw.metrics) return;
       stockData[d.id] = {
         name: raw.name, indices: raw.indices||[],
         candles: (raw.candles||[]).map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]})),
         metrics: raw.metrics, lastUpdated: raw.lastUpdated
       };
+      loaded++;
+      // Update checkpoint
+      saveCheckpoint(d.id, raw.lastUpdated);
     });
+
     const n = Object.keys(stockData).length;
-    if (n>0) {
-      setStatus('live',`${n} Aktien (gespeichert)`);
-      document.getElementById('loadBtn').textContent='Aktualisieren';
+    if (n > 0) {
+      setStatus('live', `${n} Aktien geladen`);
+      document.getElementById('loadBtn').textContent = 'Aktualisieren';
       document.getElementById('filterSection').classList.add('visible');
       applyCurrentFilter();
+
+      // Auto-continue loading if we have fewer than expected
+      const totalExpected = Object.keys(ALL_STOCKS).length;
+      if (n < totalExpected * 0.9) {
+        setStatus('loading', `${n} geladen – lade Rest...`);
+        setTimeout(() => window.loadAllData(), 1500);
+      }
     } else {
-      setStatus('','Bereit - noch keine Daten');
+      setStatus('', 'Bereit - Daten laden');
     }
-  } catch(e) { setStatus('','Firestore Fehler'); console.error(e); }
+  } catch(e) {
+    setStatus('', 'Firestore Fehler - offline?');
+    console.error(e);
+  }
 }
 
 // ── Delta Loading ─────────────────────────────────────────────────────────────
 function needsUpdate(sym) {
   const d = stockData[sym];
-  if (!d?.lastUpdated) return true;
-  return (Date.now()-d.lastUpdated)/3600000 > 6;
+  if (d?.lastUpdated) {
+    return (Date.now()-d.lastUpdated)/3600000 > 6;
+  }
+  // Check localStorage checkpoint
+  const progress = loadCheckpoint();
+  if (progress[sym]) {
+    const ageH = (Date.now() - progress[sym]) / 3600000;
+    return ageH > 6;
+  }
+  return true;
 }
 function missingDays(sym) {
   const d = stockData[sym];
@@ -947,7 +1005,23 @@ window.loadAllData = () => {
     existingData[sym] = { candles: d.candles };
   });
 
+  // Split into chunks of 100 to avoid iOS worker timeout
+  // Worker will process and we restart it for next chunk if needed
   activeWorker.postMessage({ symbols: toLoad, existingData });
+  
+  // Watchdog: if worker stalls for 60s, restart it from checkpoint
+  let lastProgress = Date.now();
+  const watchdog = setInterval(() => {
+    if (Date.now() - lastProgress > 60000 && isLoading) {
+      console.warn('Worker stalled - restarting');
+      clearInterval(watchdog);
+      if (activeWorker) activeWorker.terminate();
+      activeWorker = null;
+      isLoading = false;
+      document.getElementById('loadBtn').disabled = false;
+      setTimeout(() => window.loadAllData(), 2000);
+    }
+  }, 10000);
 
   const errors = [];
 
@@ -955,8 +1029,11 @@ window.loadAllData = () => {
     const msg = e.data;
 
     if (msg.type === 'stock') {
+      lastProgress = Date.now();
       const { symbol, name, indices, candles, metrics, progress } = msg;
-      stockData[symbol] = { candles, metrics, name, indices, lastUpdated: Date.now() };
+      const now = Date.now();
+      stockData[symbol] = { candles, metrics, name, indices, lastUpdated: now };
+      saveCheckpoint(symbol, now);
       saveToFirestore(symbol, candles, metrics).catch(() => {});
 
       // Update progress
@@ -978,6 +1055,7 @@ window.loadAllData = () => {
     }
 
     if (msg.type === 'done') {
+      clearInterval(watchdog);
       showProgress(false);
       isLoading = false;
       activeWorker = null;
@@ -1001,10 +1079,13 @@ window.loadAllData = () => {
 
   activeWorker.onerror = (e) => {
     console.error('Worker error:', e);
+    clearInterval(watchdog);
     showProgress(false);
     isLoading = false;
     activeWorker = null;
     document.getElementById('loadBtn').disabled = false;
+    // Auto retry after error
+    setTimeout(() => window.loadAllData(), 3000);
   };
 };
 
@@ -1211,6 +1292,8 @@ window.addEventListener('resize',()=>{
 :root{--bg:#080c14;--surf:#0f1623;--surf2:#131d2e;--border:#1a2540;--accent:#2563eb;--cyan:#06b6d4;--green:#22c55e;--red:#ef4444;--purple:#a855f7;--text:#e2e8f0;--muted:#475569;--dim:#1e293b}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;min-height:100vh;overflow-x:hidden}
+/* Solid bar behind status bar - prevents charts showing through */
+body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);background:var(--bg);z-index:999}
 .cards-grid{padding-bottom:calc(60px + env(safe-area-inset-bottom))}
 #loginScreen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:-webkit-fill-available;padding:32px;padding-top:calc(32px + env(safe-area-inset-top));padding-bottom:calc(32px + env(safe-area-inset-bottom));gap:22px;background:radial-gradient(ellipse at 50% 0%,#0f1e3a,var(--bg) 70%)}
 .login-logo{font-size:30px;font-weight:800;letter-spacing:-1px;background:linear-gradient(135deg,var(--accent),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
@@ -1218,8 +1301,9 @@ body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSy
 .login-btn{display:flex;align-items:center;gap:10px;padding:14px 28px;background:#fff;border:none;border-radius:14px;color:#1a1a1a;font-size:15px;font-weight:600;cursor:pointer}
 .login-btn svg{width:20px;height:20px}
 .login-note{font-size:11px;color:var(--muted);text-align:center;line-height:1.6}
-#appShell{display:none;flex-direction:column;min-height:100vh;min-height:-webkit-fill-available}
-header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.98);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 14px 10px;padding-top:calc(12px + env(safe-area-inset-top))}
+#appShell{display:none;flex-direction:column;min-height:100vh;min-height:-webkit-fill-available;position:relative}
+header{position:sticky;top:0;z-index:1000;background:rgba(8,12,20,1);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 14px 10px;padding-top:calc(12px + env(safe-area-inset-top))}
+header::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);background:#080c14;z-index:1001;pointer-events:none}
 .hrow{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .logo{font-size:17px;font-weight:800;letter-spacing:-.5px;background:linear-gradient(90deg,var(--accent),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .header-right{display:flex;align-items:center;gap:8px}
