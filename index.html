@@ -836,12 +836,51 @@ onAuthStateChanged(auth, user => {
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appShell').style.display='flex';
     document.getElementById('userEmail').textContent=user.email;
-    loadFromFirestore();
+    document.getElementById('loadBtn').disabled = false;
+    testFirestore().then(ok => {
+      if (ok) {
+        loadFromFirestore();
+      } else {
+        setStatus('', 'Firestore nicht erreichbar');
+        showToast('Firestore Verbindung fehlgeschlagen – pruefen Sie die Regeln', 8000);
+        document.getElementById('loadBtn').disabled = false;
+      }
+    });
   } else {
     document.getElementById('loginScreen').style.display='flex';
     document.getElementById('appShell').style.display='none';
+    stockData = {};
   }
 });
+
+// Test Firestore connection with a simple write+read
+async function testFirestore() {
+  if (!currentUser) return false;
+  try {
+    const testRef = doc(db, 'users', currentUser.uid, 'meta', 'ping');
+    await setDoc(testRef, { ts: Date.now() });
+    showToast('Firestore verbunden', 2000);
+    return true;
+  } catch(e) {
+    console.error('Firestore test failed:', e.code, e.message);
+    showToast('Firestore Fehler: ' + e.code, 6000);
+    return false;
+  }
+}
+
+function showToast(msg, duration=3000) {
+  let t = document.getElementById('toast');
+  if (!t) {
+    t = document.createElement('div');
+    t.id = 'toast';
+    t.style.cssText = 'position:fixed;bottom:calc(20px + env(safe-area-inset-bottom));left:16px;right:16px;background:#1e293b;color:#e2e8f0;padding:12px 16px;border-radius:12px;font-size:13px;z-index:999;border:1px solid #334155;text-align:center;';
+    document.body.appendChild(t);
+  }
+  t.textContent = msg;
+  t.style.display = 'block';
+  clearTimeout(t._timer);
+  t._timer = setTimeout(() => t.style.display='none', duration);
+}
 
 window.doLogin = async () => {
   try { await signInWithPopup(auth, new GoogleAuthProvider()); }
@@ -863,21 +902,18 @@ async function saveToFirestore(symbol, candles, metrics) {
   for (let attempt = 0; attempt < 3; attempt++) {
     try {
       await setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), data);
-      // Also save checkpoint to localStorage
-      try {
-        const key = 'ckpt_' + symbol;
-        localStorage.setItem(key, JSON.stringify({
-          lastUpdated: data.lastUpdated,
-          metrics,
-          candles: data.candles.slice(-10) // just last 10 candles as timestamp ref
-        }));
-      } catch(e) {}
-      return;
+      saveCheckpoint(symbol, data.lastUpdated);
+      return; // success
     } catch(e) {
-      if (attempt === 2) console.warn('Firestore save failed:', symbol, e);
+      console.warn(`Firestore save attempt ${attempt+1} failed for ${symbol}:`, e.code, e.message);
+      if (attempt === 0 && e.code === 'permission-denied') {
+        showToast('Firestore: Keine Berechtigung – Regeln pruefen!', 8000);
+        return; // No point retrying permission errors
+      }
       await new Promise(r => setTimeout(r, 1000 * (attempt + 1)));
     }
   }
+  console.error('Firestore save permanently failed for:', symbol);
 }
 
 // Save progress checkpoint to localStorage so we can resume
@@ -897,58 +933,82 @@ function loadCheckpoint() {
 
 async function loadFromFirestore() {
   if (!currentUser) return;
-  setStatus('loading','Lade gespeicherte Daten...');
+  setStatus('loading', 'Lade gespeicherte Daten...');
+
+  // ── Timeout: if Firestore takes >10s, show button anyway ──
+  const fallbackTimer = setTimeout(() => {
+    if (Object.keys(stockData).length === 0) {
+      setStatus('', 'Bereit - Daten laden');
+      document.getElementById('loadBtn').disabled = false;
+    }
+  }, 10000);
+
   try {
-    const snap = await getDocs(collection(db,'users',currentUser.uid,'stocks'));
-    let loaded = 0;
+    const snap = await getDocs(collection(db, 'users', currentUser.uid, 'stocks'));
+    clearTimeout(fallbackTimer);
+
     snap.forEach(d => {
       const raw = d.data();
-      if (!raw.candles || !raw.metrics) return;
+      if (!raw.candles?.length || !raw.metrics) return;
       stockData[d.id] = {
-        name: raw.name, indices: raw.indices||[],
-        candles: (raw.candles||[]).map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]})),
-        metrics: raw.metrics, lastUpdated: raw.lastUpdated
+        name:        raw.name,
+        indices:     raw.indices || [],
+        candles:     raw.candles.map(r => ({ time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5] })),
+        metrics:     raw.metrics,
+        lastUpdated: raw.lastUpdated,
       };
-      loaded++;
-      // Update checkpoint
       saveCheckpoint(d.id, raw.lastUpdated);
     });
 
     const n = Object.keys(stockData).length;
+    console.log(`Firestore loaded: ${n} stocks`);
+
     if (n > 0) {
-      setStatus('live', `${n} Aktien geladen`);
+      setStatus('live', `${n} Aktien`);
       document.getElementById('loadBtn').textContent = 'Aktualisieren';
+      document.getElementById('loadBtn').disabled = false;
       document.getElementById('filterSection').classList.add('visible');
       applyCurrentFilter();
 
-      // Auto-continue loading if we have fewer than expected
+      // Auto-load missing stocks silently
       const totalExpected = Object.keys(ALL_STOCKS).length;
-      if (n < totalExpected * 0.9) {
-        setStatus('loading', `${n} geladen – lade Rest...`);
-        setTimeout(() => window.loadAllData(), 1500);
+      if (n < totalExpected * 0.85) {
+        setStatus('loading', `${n} geladen – aktualisiere...`);
+        setTimeout(() => window.loadAllData(), 2000);
       }
     } else {
+      // Nothing in Firestore at all
       setStatus('', 'Bereit - Daten laden');
+      document.getElementById('loadBtn').disabled = false;
+      document.getElementById('loadBtn').textContent = 'Daten laden';
     }
+
   } catch(e) {
-    setStatus('', 'Firestore Fehler - offline?');
-    console.error(e);
+    clearTimeout(fallbackTimer);
+    console.error('Firestore error:', e);
+    setStatus('', 'Verbindungsfehler');
+    document.getElementById('loadBtn').disabled = false;
+    document.getElementById('loadBtn').textContent = 'Daten laden';
   }
 }
 
 // ── Delta Loading ─────────────────────────────────────────────────────────────
 function needsUpdate(sym) {
+  // Check in-memory data first
   const d = stockData[sym];
-  if (d?.lastUpdated) {
-    return (Date.now()-d.lastUpdated)/3600000 > 6;
-  }
-  // Check localStorage checkpoint
-  const progress = loadCheckpoint();
-  if (progress[sym]) {
-    const ageH = (Date.now() - progress[sym]) / 3600000;
+  if (d?.lastUpdated && d?.candles?.length > 10) {
+    const ageH = (Date.now() - d.lastUpdated) / 3600000;
     return ageH > 6;
   }
-  return true;
+  // Check localStorage checkpoint
+  try {
+    const progress = loadCheckpoint();
+    if (progress[sym]) {
+      const ageH = (Date.now() - progress[sym]) / 3600000;
+      return ageH > 6;
+    }
+  } catch(e) {}
+  return true; // No data at all - must load
 }
 function missingDays(sym) {
   const d = stockData[sym];
