@@ -904,78 +904,108 @@ function mergeCandles(existing, fresh) {
   return [...existing,...fresh.filter(c=>c.time>lastT)].filter(c=>c.time>cutoff);
 }
 
-async function fetchCandles(symbol, days=365) {
-  const end=Math.floor(Date.now()/1000), start=end-days*86400;
-  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&period1=${start}&period2=${end}`;
-  
-  // Try each proxy once
-  for (let attempt=0; attempt<PROXIES.length; attempt++) {
-    const proxy = PROXIES[(proxyIndex + attempt) % PROXIES.length];
-    try {
-      const res=await fetch(proxy+encodeURIComponent(url),{signal:AbortSignal.timeout(12000)});
-      if(!res.ok) continue;
-      const json=await res.json();
-      const result=json?.chart?.result?.[0];
-      if(!result) continue;
-      const ts=result.timestamp,q=result.indicators.quote[0];
-      const candles = ts.map((t,i)=>({time:t,open:q.open[i],high:q.high[i],low:q.low[i],close:q.close[i],volume:q.volume[i]}))
-               .filter(c=>c.open&&c.high&&c.low&&c.close);
-      if (candles.length > 0) return candles;
-    } catch(e) { /* try next proxy */ }
-  }
-  throw new Error('Alle Proxies fehlgeschlagen');
-}
+// ── Web Worker Load ───────────────────────────────────────────────────────────
+let activeWorker = null;
 
-// ── Main Load ─────────────────────────────────────────────────────────────────
-window.loadAllData = async () => {
+window.loadAllData = () => {
   if (isLoading) return;
-  isLoading=true;
-  document.getElementById('loadBtn').disabled=true;
+  isLoading = true;
+  document.getElementById('loadBtn').disabled = true;
   document.getElementById('errorMsg').classList.remove('visible');
   showProgress(true);
-  // Rotate proxy on each load attempt to spread load
-  proxyIndex = (proxyIndex + 1) % PROXIES.length;
 
-  const idxFilter = activeIndex==='ALL' ? Object.keys(STOCKS) : [activeIndex];
-  const toLoad=[];
-  idxFilter.forEach(idx=>STOCKS[idx].forEach(({s})=>{ if(!toLoad.includes(s)) toLoad.push(s); }));
+  // Build symbol list
+  const idxFilter = activeIndex === 'ALL' ? Object.keys(STOCKS) : [activeIndex];
+  const seen = new Set();
+  const toLoad = [];
+  idxFilter.forEach(idx => {
+    STOCKS[idx].forEach(({s}) => {
+      if (!seen.has(s) && needsUpdate(s)) {
+        seen.add(s);
+        const info = ALL_STOCKS[s] ?? { name: s, indices: [] };
+        toLoad.push({ symbol: s, name: info.name, indices: info.indices });
+      }
+    });
+  });
 
-  const errors=[];
-  const BATCH=3;
-  for(let i=0;i<toLoad.length;i+=BATCH) {
-    const chunk=toLoad.slice(i,i+BATCH);
-    updateProgress(i,toLoad.length,`${i+1}-${Math.min(i+BATCH,toLoad.length)} von ${toLoad.length}`);
-    await Promise.all(chunk.map(async sym=>{
-      if(!needsUpdate(sym)) return;
-      try {
-        const days=Math.min(missingDays(sym)+5,365);
-        const fresh=await fetchCandles(sym,days);
-        const candles=mergeCandles(stockData[sym]?.candles,fresh);
-        const metrics=computeMetrics(candles);
-        const info=ALL_STOCKS[sym]??{name:sym,indices:[]};
-        stockData[sym]={candles,metrics,name:info.name,indices:info.indices,lastUpdated:Date.now()};
-        // Save to Firestore async - don't block or fail the UI
-        saveToFirestore(sym,candles,metrics).catch(e=>console.warn('Firestore save failed:',sym,e));
-      } catch(e){ errors.push(sym); }
-    }));
-    await new Promise(r=>setTimeout(r,350));
-  }
-
-  showProgress(false);
-  isLoading=false;
-  document.getElementById('loadBtn').disabled=false;
-
-  if(errors.length) {
-    const em=document.getElementById('errorMsg');
-    em.textContent=`Fehler bei ${errors.length} Aktien: ${errors.slice(0,6).join(', ')}${errors.length>6?' ...':''}`;
-    em.classList.add('visible');
-  }
-  const n=Object.keys(stockData).length;
-  if(n>0) {
-    setStatus('live',`${n} Aktien`);
-    document.getElementById('filterSection').classList.add('visible');
+  if (toLoad.length === 0) {
+    // Everything is fresh – just re-render
+    showProgress(false);
+    isLoading = false;
+    document.getElementById('loadBtn').disabled = false;
     applyCurrentFilter();
+    return;
   }
+
+  // Terminate old worker if running
+  if (activeWorker) activeWorker.terminate();
+  activeWorker = new Worker('worker.js');
+
+  // Pass existing candle data so worker can do delta-loading
+  const existingData = {};
+  Object.entries(stockData).forEach(([sym, d]) => {
+    existingData[sym] = { candles: d.candles };
+  });
+
+  activeWorker.postMessage({ symbols: toLoad, existingData });
+
+  const errors = [];
+
+  activeWorker.onmessage = async (e) => {
+    const msg = e.data;
+
+    if (msg.type === 'stock') {
+      const { symbol, name, indices, candles, metrics, progress } = msg;
+      stockData[symbol] = { candles, metrics, name, indices, lastUpdated: Date.now() };
+      saveToFirestore(symbol, candles, metrics).catch(() => {});
+
+      // Update progress
+      updateProgress(progress.completed, progress.total,
+        `${progress.completed} von ${progress.total} geladen`);
+
+      // Re-render incrementally every 10 stocks
+      if (progress.completed % 10 === 0 || progress.completed === progress.total) {
+        document.getElementById('filterSection').classList.add('visible');
+        applyCurrentFilter();
+        setStatus('live', `${Object.keys(stockData).length} Aktien`);
+      }
+    }
+
+    if (msg.type === 'error') {
+      errors.push(msg.symbol);
+      updateProgress(msg.progress.completed, msg.progress.total,
+        `${msg.progress.completed} von ${msg.progress.total}`);
+    }
+
+    if (msg.type === 'done') {
+      showProgress(false);
+      isLoading = false;
+      activeWorker = null;
+      document.getElementById('loadBtn').disabled = false;
+      document.getElementById('loadBtn').textContent = 'Aktualisieren';
+
+      if (errors.length) {
+        const em = document.getElementById('errorMsg');
+        em.textContent = `Fehler bei ${errors.length} Aktien: ${errors.slice(0,6).join(', ')}${errors.length>6?' ...':''}`;
+        em.classList.add('visible');
+      }
+
+      const n = Object.keys(stockData).length;
+      if (n > 0) {
+        setStatus('live', `${n} Aktien`);
+        document.getElementById('filterSection').classList.add('visible');
+        applyCurrentFilter();
+      }
+    }
+  };
+
+  activeWorker.onerror = (e) => {
+    console.error('Worker error:', e);
+    showProgress(false);
+    isLoading = false;
+    activeWorker = null;
+    document.getElementById('loadBtn').disabled = false;
+  };
 };
 
 // ── Filter ────────────────────────────────────────────────────────────────────
