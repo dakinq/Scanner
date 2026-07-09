@@ -15,7 +15,7 @@ async function fetchCandles(symbol, days = 365) {
   for (let i = 0; i < PROXIES.length; i++) {
     try {
       const res = await fetch(PROXIES[i] + encodeURIComponent(url), {
-        signal: AbortSignal.timeout(12000)
+        signal: AbortSignal.timeout(20000)
       });
       if (!res.ok) continue;
       const json   = await res.json();
@@ -89,7 +89,7 @@ function computeMetrics(candles) {
 // Main message handler
 self.onmessage = async (e) => {
   const { symbols, existingData } = e.data;
-  const BATCH = 3;
+  const BATCH = 2;
   let completed = 0;
 
   for (let i = 0; i < symbols.length; i += BATCH) {
@@ -127,7 +127,7 @@ self.onmessage = async (e) => {
     }));
 
     // Pause between batches
-    await new Promise(r => setTimeout(r, 350));
+    await new Promise(r => setTimeout(r, 800));
   }
 
   self.postMessage({ type: 'done' });
