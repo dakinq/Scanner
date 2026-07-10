@@ -801,6 +801,13 @@ function calcRSI(cl,p=14) {
   if(l===0) return 100;
   return 100-(100/(1+(g/p)/(l/p)));
 }
+function calcEMA(cl, p) {
+  if (cl.length < p) return null;
+  const k = 2 / (p + 1);
+  let ema = cl.slice(0, p).reduce((a, b) => a + b, 0) / p;
+  for (let i = p; i < cl.length; i++) ema = cl[i] * k + ema * (1 - k);
+  return ema;
+}
 function computeMetrics(candles) {
   const cl=candles.map(c=>c.close),hi=candles.map(c=>c.high),lo=candles.map(c=>c.low);
   const last=cl[cl.length-1],prev=cl[cl.length-2]??last,c30=cl[Math.max(0,cl.length-31)];
@@ -1054,19 +1061,17 @@ window.closeFilterPopup = (e) => {
 
 // ── Filter Popup Variable Chips ───────────────────────────────────────────────
 const FP_VARS = [
-  { name: 'close',      insert: 'close',         desc: 'Aktueller Schlusskurs',                        example: 'close > 100' },
-  { name: 'open',       insert: 'open',           desc: 'Eröffnungskurs des letzten Handelstages',      example: 'close > open' },
-  { name: 'high',       insert: 'high',           desc: 'Tageshoch des letzten Handelstages',           example: 'high > high52w * 0.99' },
-  { name: 'low',        insert: 'low',            desc: 'Tagestief des letzten Handelstages',           example: 'low < ma50' },
-  { name: 'volume',     insert: 'volume',         desc: 'Handelsvolumen des letzten Tages',             example: 'volume > 1000000' },
-  { name: 'ma20',       insert: 'ma20',           desc: 'Gleitender Durchschnitt über 20 Tage',         example: 'close > ma20' },
-  { name: 'ma50',       insert: 'ma50',           desc: 'Gleitender Durchschnitt über 50 Tage',         example: 'ma20 > ma50' },
-  { name: 'ma200',      insert: 'ma200',          desc: 'Gleitender Durchschnitt über 200 Tage',        example: 'close > ma200 && ma50 > ma200' },
-  { name: 'rsi',        insert: 'rsi',            desc: 'Relative Strength Index (14 Perioden, 0–100)', example: 'rsi < 30' },
-  { name: 'change1d',   insert: 'change1d',       desc: 'Kursveränderung heute in %',                  example: 'change1d > 3' },
-  { name: 'change30d',  insert: 'change30d',      desc: 'Kursveränderung der letzten 30 Tage in %',    example: 'change30d > 10' },
-  { name: 'high52w',    insert: 'high52w',        desc: '52-Wochen-Hoch',                               example: 'close >= high52w * 0.95' },
-  { name: 'low52w',     insert: 'low52w',         desc: '52-Wochen-Tief',                               example: 'close <= low52w * 1.05' },
+  { name: 'close',      insert: 'close',          desc: 'Aktueller Schlusskurs',                                                example: 'close > 100' },
+  { name: 'open',       insert: 'open',           desc: 'Eröffnungskurs des letzten Handelstages',                             example: 'close > open' },
+  { name: 'high',       insert: 'high',           desc: 'Tageshoch des letzten Handelstages',                                  example: 'high > high52w * 0.99' },
+  { name: 'low',        insert: 'low',            desc: 'Tagestief des letzten Handelstages',                                  example: 'low < ma(50)' },
+  { name: 'volume',     insert: 'volume',         desc: 'Handelsvolumen des letzten Tages',                                    example: 'volume > 1000000' },
+  { name: 'ma(n)',      insert: 'ma(50)',          desc: 'Gleitender Durchschnitt über beliebig viele Tage (z.B. ma(20), ma(50), ma(200))', example: 'close > ma(50) && ma(20) > ma(200)' },
+  { name: 'ema(n)',     insert: 'ema(20)',         desc: 'Exponentieller gleitender Durchschnitt über n Tage (reagiert schneller auf Kursbewegungen)', example: 'close > ema(20) && ema(20) > ema(50)' },
+  { name: 'change(n)',  insert: 'change(1)',       desc: 'Kursveränderung der letzten n Tage in % (z.B. change(1) = heute, change(30) = 30 Tage)', example: 'change(1) > 2 && change(30) > 10' },
+  { name: 'rsi',        insert: 'rsi',            desc: 'Relative Strength Index (14 Perioden, 0–100)',                        example: 'rsi < 30' },
+  { name: 'high52w',    insert: 'high52w',        desc: '52-Wochen-Hoch',                                                      example: 'close >= high52w * 0.95' },
+  { name: 'low52w',     insert: 'low52w',         desc: '52-Wochen-Tief',                                                      example: 'close <= low52w * 1.05' },
   { name: 'range()',    insert: 'range(20, 5)',    desc: 'Konsolidierung: alle Schlusskurse der letzten X Tage innerhalb ±Y% des aktuellen Kurses', example: 'range(20, 5) && rsi < 50' },
 ];
 
@@ -1158,8 +1163,18 @@ function applyCurrentFilter() {
     if(activeFilter==='all') return true;
     if(activeFilter.startsWith('custom:')) {
       try {
-        // range(days, pct): alle Schlusskurse der letzten `days` Tage
-        // liegen innerhalb ±pct% des aktuellen Schlusskurses
+        const cl = candles.map(c => c.close);
+        // ma(n): gleitender Durchschnitt über n Tage
+        const maFunc = (n) => calcMA(cl, n);
+        // ema(n): exponentieller gleitender Durchschnitt über n Tage
+        const emaFunc = (n) => calcEMA(cl, n);
+        // change(n): Kursveränderung der letzten n Tage in %
+        const changeFunc = (n) => {
+          if (!cl.length) return null;
+          const ref = cl[Math.max(0, cl.length - 1 - Math.max(n, 1))];
+          return ref ? ((cl[cl.length - 1] - ref) / ref) * 100 : null;
+        };
+        // range(days, pct): alle Schlusskurse der letzten days Tage innerhalb ±pct% des aktuellen Kurses
         const rangeFunc = (days, pct) => {
           if(!candles.length) return false;
           const slice = candles.slice(-Math.max(days,1));
@@ -1168,10 +1183,10 @@ function applyCurrentFilter() {
           const hi = ref * (1 + pct/100);
           return slice.every(c => c.close >= lo && c.close <= hi);
         };
-        return !!(new Function('close','open','high','low','volume','ma20','ma50','ma200',
-          'rsi','change1d','change30d','high52w','low52w','range',`return !!(${activeFilter.slice(7)})`)
-          (m.close,m.open,m.high,m.low,m.volume,m.ma20,m.ma50,m.ma200,
-           m.rsi,m.change1d,m.change30d,m.high52w,m.low52w,rangeFunc));
+        return !!(new Function('close','open','high','low','volume',
+          'rsi','high52w','low52w','ma','ema','change','range',`return !!(${activeFilter.slice(7)})`)
+          (m.close,m.open,m.high,m.low,m.volume,
+           m.rsi,m.high52w,m.low52w,maFunc,emaFunc,changeFunc,rangeFunc));
       } catch{ return false; }
     }
     return true;
@@ -1438,7 +1453,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .filter-section.visible{display:block}
 .filter-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:7px}
 .filter-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
-.filter-chip{padding:5px 11px;border-radius:20px;border:1px solid var(--border);background:var(--surf);color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap}
+.filter-chip{padding:5px 11px;border-radius:20px;border:1px solid var(--border);background:var(--surf);color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center}
 .filter-chip.active{border-color:var(--cyan);background:rgba(6,182,212,.12);color:var(--cyan)}
 .custom-row{display:flex;gap:7px;align-items:center}
 .filter-input{flex:1;background:var(--surf2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-size:12px;outline:none;font-family:monospace}
@@ -1446,9 +1461,9 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .filter-input::placeholder{color:var(--muted)}
 .apply-btn{padding:7px 12px;background:var(--accent);border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
 .filter-add-btn{flex-shrink:0;padding:7px 15px;border-radius:20px;border:1px dashed var(--accent);background:transparent;color:var(--accent);font-size:18px;font-weight:700;cursor:pointer;line-height:1}
-.hint-code{background:var(--surf);border:1px solid var(--accent);padding:7px 12px;border-radius:8px;color:var(--text);font-size:13px;font-family:monospace;cursor:pointer;display:inline-block;-webkit-tap-highlight-color:transparent}
+.hint-code{background:var(--surf);border:1px solid var(--cyan);padding:7px 12px;border-radius:8px;color:var(--text);font-size:13px;font-family:monospace;cursor:pointer;display:inline-block;-webkit-tap-highlight-color:transparent}
 .hint-code:active{background:var(--dim)}
-.op-code{background:var(--dim);border:1px solid var(--accent);padding:7px 12px;border-radius:8px;color:var(--text);font-size:15px;font-family:monospace;cursor:pointer;display:inline-block;font-weight:700;-webkit-tap-highlight-color:transparent}
+.op-code{background:var(--dim);border:1px solid var(--cyan);padding:7px 12px;border-radius:8px;color:var(--text);font-size:15px;font-family:monospace;cursor:pointer;display:inline-block;font-weight:700;-webkit-tap-highlight-color:transparent}
 .op-code:active{background:var(--surf2)}
 #filterPopupSheet .filter-input{display:block;font-size:15px;padding:10px 12px}
 #fpVarInfo{font-size:13px}
