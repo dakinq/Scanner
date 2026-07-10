@@ -1085,7 +1085,6 @@ const FP_OPS = [
 function fpAppend(text) {
   const el = document.getElementById('fpExpr');
   el.value = el.value + text;
-  el.focus();
 }
 
 function fpBuildChips() {
@@ -1447,9 +1446,9 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .filter-input::placeholder{color:var(--muted)}
 .apply-btn{padding:7px 12px;background:var(--accent);border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
 .filter-add-btn{flex-shrink:0;padding:7px 15px;border-radius:20px;border:1px dashed var(--accent);background:transparent;color:var(--accent);font-size:18px;font-weight:700;cursor:pointer;line-height:1}
-.hint-code{background:var(--surf);border:1px solid var(--border);padding:7px 12px;border-radius:8px;color:var(--cyan);font-size:13px;font-family:monospace;cursor:pointer;display:inline-block;-webkit-tap-highlight-color:transparent}
+.hint-code{background:var(--surf);border:1px solid var(--accent);padding:7px 12px;border-radius:8px;color:var(--text);font-size:13px;font-family:monospace;cursor:pointer;display:inline-block;-webkit-tap-highlight-color:transparent}
 .hint-code:active{background:var(--dim)}
-.op-code{background:var(--dim);border:1px solid var(--border);padding:7px 12px;border-radius:8px;color:var(--text);font-size:15px;font-family:monospace;cursor:pointer;display:inline-block;font-weight:700;-webkit-tap-highlight-color:transparent}
+.op-code{background:var(--dim);border:1px solid var(--accent);padding:7px 12px;border-radius:8px;color:var(--text);font-size:15px;font-family:monospace;cursor:pointer;display:inline-block;font-weight:700;-webkit-tap-highlight-color:transparent}
 .op-code:active{background:var(--surf2)}
 #filterPopupSheet .filter-input{display:block;font-size:15px;padding:10px 12px}
 #fpVarInfo{font-size:13px}
