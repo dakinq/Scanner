@@ -54,7 +54,7 @@ const STOCKS = {
     {s:'RHM.DE',n:'Rheinmetall'},{s:'RWE.DE',n:'RWE'},{s:'SAP.DE',n:'SAP'},
     {s:'SHL.DE',n:'Siemens Healthineers'},{s:'SIE.DE',n:'Siemens'},{s:'SY1.DE',n:'Symrise'},
     {s:'VNA.DE',n:'Vonovia'},{s:'VOW3.DE',n:'Volkswagen'},{s:'ZAL.DE',n:'Zalando'},
-    {s:'HFG.DE',n:'HelloFresh'}
+    {s:'SRT3.DE',n:'Sartorius'}
   ],
   EUROSTOXX: [
     {s:'ASML.AS',n:'ASML'},{s:'MC.PA',n:'LVMH'},{s:'SAN.PA',n:'Sanofi'},
@@ -73,7 +73,10 @@ const STOCKS = {
     {s:'MUV2.DE',n:'Munich Re'},{s:'BAS.DE',n:'BASF'},{s:'BAYN.DE',n:'Bayer'},
     {s:'BMW.DE',n:'BMW'},{s:'DBK.DE',n:'Deutsche Bank'},{s:'DTE.DE',n:'Deutsche Telekom'},
     {s:'EOAN.DE',n:'E.ON'},{s:'IFX.DE',n:'Infineon'},{s:'MBG.DE',n:'Mercedes-Benz'},
-    {s:'RWE.DE',n:'RWE'},{s:'VOW3.DE',n:'Volkswagen'}
+    {s:'RWE.DE',n:'RWE'},{s:'VOW3.DE',n:'Volkswagen'},{s:'ADYEN.AS',n:'Adyen'},
+    {s:'PRX.AS',n:'Prosus'},{s:'NOKIA.HE',n:'Nokia'},{s:'NDA-FI.HE',n:'Nordea'},
+    {s:'UCB.BR',n:'UCB'},{s:'DHL.DE',n:'DHL Group'},{s:'ENR.DE',n:'Siemens Energy'},
+    {s:'AIR.DE',n:'Airbus'}
   ],
   SMI: [
     {s:'NESN.SW',n:'Nestle'},{s:'ROG.SW',n:'Roche'},{s:'NOVN.SW',n:'Novartis'},
@@ -84,134 +87,126 @@ const STOCKS = {
     {s:'ALC.SW',n:'Alcon'},{s:'CFR.SW',n:'Richemont'},{s:'SGSN.SW',n:'SGS'},
     {s:'HOLN.SW',n:'Holcim'},{s:'KNIN.SW',n:'Kuehne+Nagel'}
   ],
-  FTSE100: [
-    {s:'AZN.L',n:'AstraZeneca'},
-    {s:'SHEL.L',n:'Shell'},
-    {s:'HSBA.L',n:'HSBC'},
-    {s:'ULVR.L',n:'Unilever'},
-    {s:'BP.L',n:'BP'},
-    {s:'RIO.L',n:'Rio Tinto'},
-    {s:'GSK.L',n:'GSK'},
-    {s:'DGE.L',n:'Diageo'},
-    {s:'REL.L',n:'RELX'},
-    {s:'NG.L',n:'National Grid'},
-    {s:'VOD.L',n:'Vodafone'},
-    {s:'BATS.L',n:'British American Tobacco'},
+  FTSE100 : [
+    {s:'III.L',n:'3i Group'},
+    {s:'ADM.L',n:'Admiral'},
     {s:'AAL.L',n:'Anglo American'},
-    {s:'LSEG.L',n:'London Stock Exchange'},
-    {s:'BHP.L',n:'BHP'},
-    {s:'LLOY.L',n:'Lloyds Banking'},
-    {s:'NWG.L',n:'NatWest'},
-    {s:'BARC.L',n:'Barclays'},
-    {s:'PRU.L',n:'Prudential'},
+    {s:'ANTO.L',n:'Antofagasta'},
+    {s:'AHT.L',n:'Ashtead Group'},
     {s:'ABF.L',n:'Associated British Foods'},
-    {s:'AHT.L',n:'Ashtead'},
+    {s:'AZN.L',n:'AstraZeneca'},
+    {s:'AUTO.L',n:'Auto Trader'},
+    {s:'AV.L',n:'Aviva'},
     {s:'BA.L',n:'BAE Systems'},
+    {s:'BARC.L',n:'Barclays'},
+    {s:'BTRW.L',n:'Barratt Redrow'},
+    {s:'BKG.L',n:'Berkeley Group'},
+    {s:'BP.L',n:'BP'},
+    {s:'BATS.L',n:'British American Tobacco'},
     {s:'BNZL.L',n:'Bunzl'},
-    {s:'CCH.L',n:'Coca-Cola HBC'},
     {s:'CNA.L',n:'Centrica'},
+    {s:'CCH.L',n:'Coca-Cola HBC'},
     {s:'CPG.L',n:'Compass Group'},
-    {s:'CRDA.L',n:'Croda'},
-    {s:'CRH.L',n:'CRH'},
+    {s:'CTEC.L',n:'ConvaTec'},
+    {s:'CRDA.L',n:'Croda International'},
+    {s:'DCC.L',n:'DCC'},
+    {s:'DGE.L',n:'Diageo'},
+    {s:'DPLM.L',n:'Diploma'},
+    {s:'ENT.L',n:'Entain'},
     {s:'EXPN.L',n:'Experian'},
+    {s:'FLTR.L',n:'Flutter Entertainment'},
     {s:'FRES.L',n:'Fresnillo'},
     {s:'GLEN.L',n:'Glencore'},
+    {s:'GSK.L',n:'GSK'},
+    {s:'HLMA.L',n:'Halma'},
     {s:'HLN.L',n:'Haleon'},
-    {s:'IAG.L',n:'IAG'},
+    {s:'HIK.L',n:'Hikma Pharmaceuticals'},
+    {s:'HSBA.L',n:'HSBC'},
+    {s:'HSX.L',n:'Hiscox'},
+    {s:'HWDN.L',n:'Howden Joinery'},
     {s:'IMB.L',n:'Imperial Brands'},
     {s:'INF.L',n:'Informa'},
-    {s:'IHG.L',n:'IHG Hotels'},
-    {s:'JD.L',n:'JD Sports'},
+    {s:'ITRK.L',n:'Intertek'},
+    {s:'IHG.L',n:'InterContinental Hotels Group'},
+    {s:'IAG.L',n:'International Consolidated Airlines Group'},
+    {s:'IMI.L',n:'IMI'},
+    {s:'JD.L',n:'JD Sports Fashion'},
     {s:'KGF.L',n:'Kingfisher'},
     {s:'LAND.L',n:'Land Securities'},
     {s:'LGEN.L',n:'Legal & General'},
+    {s:'LLOY.L',n:'Lloyds Banking Group'},
+    {s:'LSEG.L',n:'London Stock Exchange Group'},
+    {s:'MNG.L',n:'M&G'},
     {s:'MKS.L',n:'Marks & Spencer'},
     {s:'MNDI.L',n:'Mondi'},
-    {s:'MRO.L',n:'Melrose'},
-    {s:'OCDO.L',n:'Ocado'},
-    {s:'PSN.L',n:'Persimmon'},
+    {s:'MRO.L',n:'Melrose Industries'},
+    {s:'NG.L',n:'National Grid'},
+    {s:'NXT.L',n:'Next'},
+    {s:'NWG.L',n:'NatWest Group'},
+    {s:'OCDO.L',n:'Ocado Group'},
     {s:'PSON.L',n:'Pearson'},
+    {s:'PSN.L',n:'Persimmon'},
+    {s:'PHNX.L',n:'Phoenix Group'},
+    {s:'PRU.L',n:'Prudential'},
     {s:'RKT.L',n:'Reckitt'},
-    {s:'RMV.L',n:'Rightmove'},
+    {s:'REL.L',n:'RELX'},
+    {s:'RTO.L',n:'Rentokil Initial'},
+    {s:'RIO.L',n:'Rio Tinto'},
     {s:'RR.L',n:'Rolls-Royce'},
-    {s:'SBRY.L',n:'Sainsbury'},
-    {s:'SDR.L',n:'Schroders'},
+    {s:'RS1.L',n:'RS Group'},
     {s:'SGE.L',n:'Sage Group'},
-    {s:'SGRO.L',n:'Segro'},
+    {s:'SBRY.L',n:'J Sainsbury'},
+    {s:'SGRO.L',n:'SEGRO'},
+    {s:'SHEL.L',n:'Shell'},
     {s:'SN.L',n:'Smith & Nephew'},
+    {s:'SMIN.L',n:'Smiths Group'},
+    {s:'SPX.L',n:'Spirax Group'},
     {s:'SSE.L',n:'SSE'},
     {s:'STAN.L',n:'Standard Chartered'},
+    {s:'STJ.L',n:'St. James’s Place'},
     {s:'SVT.L',n:'Severn Trent'},
     {s:'TSCO.L',n:'Tesco'},
-    {s:'TW.L',n:'Taylor Wimpey'},
-    {s:'WPP.L',n:'WPP'},
+    {s:'ULVR.L',n:'Unilever'},
+    {s:'UTG.L',n:'UNITE Group'},
+    {s:'VOD.L',n:'Vodafone'},
+    {s:'WEIR.L',n:'Weir Group'},
     {s:'WTB.L',n:'Whitbread'},
-    {s:'III.L',n:'3i Group'},
-    {s:'ADM.L',n:'Admiral'},
-    {s:'ANTO.L',n:'Antofagasta'},
-    {s:'AV.L',n:'Aviva'},
+    {s:'WPP.L',n:'WPP'},
+    {s:'SMT.L',n:'Scottish Mortgage Investment Trust'},
     {s:'BRBY.L',n:'Burberry'},
     {s:'CCL.L',n:'Carnival'},
-    {s:'ENT.L',n:'Entain'},
-    {s:'HLMA.L',n:'Halma'},
-    {s:'ITRK.L',n:'Intertek'},
-    {s:'JMAT.L',n:'Johnson Matthey'},
-    {s:'NXT.L',n:'Next'},
-    {s:'PHNX.L',n:'Phoenix Group'},
-    {s:'RTO.L',n:'Rentokil'},
-    {s:'AUTO.L',n:'Auto Trader'},
-    {s:'SMT.L',n:'Scottish Mortgage'},
-    {s:'WEIR.L',n:'Weir Group'},
-    {s:'MNG.L',n:'M&G'},
-    {s:'RS1.L',n:'RS Group'},
-    {s:'BKG.L',n:'Berkeley Group'},
+    {s:'CRH.L',n:'CRH'},
+    {s:'BHP.L',n:'BHP'},
+    {s:'TW.L',n:'Taylor Wimpey'},
     {s:'BWY.L',n:'Bellway'},
-    {s:'HSX.L',n:'Hiscox'},
-    {s:'DCC.L',n:'DCC'},
-    {s:'SPX.L',n:'Spirax-Sarco'},
-    {s:'SMDS.L',n:'DS Smith'},
-    {s:'ETL.L',n:'Electrocomponents'},
-    {s:'TRN.L',n:'Trainline'},
-    {s:'HWDN.L',n:'Howden Joinery'},
-    {s:'BDEV.L',n:'Barratt Dev'},
-    {s:'BME.L',n:'B&M European'},
-    {s:'CTEC.L',n:'ConvaTec'},
-    {s:'HIK.L',n:'Hikma Pharma'},
-    {s:'DPLM.L',n:'Diploma'},
-    {s:'FLTR.L',n:'Flutter Entertainment'},
-    {s:'UTG.L',n:'Unite Group'},
-    {s:'VTY.L',n:'Vistry Group'},
-    {s:'OSB.L',n:'OSB Group'},
-    {s:'SMWH.L',n:'WH Smith'},
-    {s:'PFC.L',n:'Petrofac'},
-    {s:'HFD.L',n:'Halfords'},
-    {s:'MGGT.L',n:'Meggitt'},
-    {s:'AV.L',n:'Aviva 2'},
-    {s:'IMI.L',n:'IMI plc'},
-    {s:'HLMA.L',n:'Halma 2'},
-    {s:'RWI.L',n:'Renewi'},
-    {s:'JET.L',n:'Just Eat'},
     {s:'FRAS.L',n:'Frasers Group'},
-    {s:'STJ.L',n:'St. James\'s Place'},
-    {s:'DLG.L',n:'Direct Line'},
-    {s:'MONY.L',n:'Moneysupermarket'},
-    {s:'TUI.L',n:'TUI AG'},
-    {s:'WIZZ.L',n:'Wizz Air'}
+    {s:'BME.L',n:'B&M European Value Retail'},
+    {s:'WIZZ.L',n:'Wizz Air Holdings'},
+    {s:'AFW.L',n:'Airtel Africa'},
+    {s:'BAB.L',n:'Babcock International'},
+    {s:'BEZ.L',n:'Beazley'},
+    {s:'EDV.L',n:'Endeavour Mining'},
+    {s:'EZJ.L',n:'easyJet'},
+    {s:'ICG.L',n:'Intermediate Capital Group'},
+    {s:'PSH.L',n:'Pershing Square Holdings'},
+    {s:'SDR.L',n:'Schroders'},
+    {s:'SNWS.L',n:'Smiths News'},
+    {s:'VTY.L',n:'Vistry Group'}
   ],
   NASDAQ100: [
     {s:'AAPL',n:'Apple'},
     {s:'MSFT',n:'Microsoft'},
     {s:'NVDA',n:'NVIDIA'},
     {s:'AMZN',n:'Amazon'},
-    {s:'META',n:'Meta'},
-    {s:'GOOGL',n:'Alphabet A'},
-    {s:'GOOG',n:'Alphabet C'},
+    {s:'META',n:'Meta Platforms'},
+    {s:'GOOGL',n:'Alphabet Class A'},
+    {s:'GOOG',n:'Alphabet Class C'},
     {s:'TSLA',n:'Tesla'},
     {s:'AVGO',n:'Broadcom'},
-    {s:'COST',n:'Costco'},
+    {s:'COST',n:'Costco Wholesale'},
     {s:'NFLX',n:'Netflix'},
-    {s:'ASML',n:'ASML ADR'},
-    {s:'AMD',n:'AMD'},
+    {s:'ASML',n:'ASML Holding'},
+    {s:'AMD',n:'Advanced Micro Devices'},
     {s:'AZN',n:'AstraZeneca ADR'},
     {s:'QCOM',n:'Qualcomm'},
     {s:'INTU',n:'Intuit'},
@@ -220,39 +215,39 @@ const STOCKS = {
     {s:'TXN',n:'Texas Instruments'},
     {s:'AMGN',n:'Amgen'},
     {s:'BKNG',n:'Booking Holdings'},
-    {s:'MU',n:'Micron'},
+    {s:'MU',n:'Micron Technology'},
     {s:'CMCSA',n:'Comcast'},
     {s:'HON',n:'Honeywell'},
     {s:'LRCX',n:'Lam Research'},
     {s:'PANW',n:'Palo Alto Networks'},
     {s:'ADI',n:'Analog Devices'},
     {s:'MELI',n:'MercadoLibre'},
-    {s:'KLAC',n:'KLA Corp'},
+    {s:'KLAC',n:'KLA Corporation'},
     {s:'SNPS',n:'Synopsys'},
-    {s:'CDNS',n:'Cadence Design'},
-    {s:'REGN',n:'Regeneron'},
-    {s:'MDLZ',n:'Mondelez'},
+    {s:'CDNS',n:'Cadence Design Systems'},
+    {s:'REGN',n:'Regeneron Pharmaceuticals'},
+    {s:'MDLZ',n:'Mondelez International'},
     {s:'CRWD',n:'CrowdStrike'},
     {s:'CTAS',n:'Cintas'},
     {s:'ABNB',n:'Airbnb'},
-    {s:'MRVL',n:'Marvell Tech'},
-    {s:'CSX',n:'CSX'},
-    {s:'ORLY',n:'O\'Reilly Auto'},
+    {s:'MRVL',n:'Marvell Technology'},
+    {s:'CSX',n:'CSX Corporation'},
+    {s:'ORLY',n:'O’Reilly Automotive'},
     {s:'PCAR',n:'PACCAR'},
     {s:'ADSK',n:'Autodesk'},
     {s:'CPRT',n:'Copart'},
     {s:'FTNT',n:'Fortinet'},
     {s:'ROST',n:'Ross Stores'},
     {s:'DXCM',n:'DexCom'},
-    {s:'AEP',n:'American Electric'},
+    {s:'AEP',n:'American Electric Power'},
     {s:'FANG',n:'Diamondback Energy'},
     {s:'PAYX',n:'Paychex'},
-    {s:'ODFL',n:'Old Dominion'},
+    {s:'ODFL',n:'Old Dominion Freight Line'},
     {s:'MRNA',n:'Moderna'},
-    {s:'IDXX',n:'IDEXX Labs'},
-    {s:'MCHP',n:'Microchip Tech'},
+    {s:'IDXX',n:'IDEXX Laboratories'},
+    {s:'MCHP',n:'Microchip Technology'},
     {s:'EA',n:'Electronic Arts'},
-    {s:'WBD',n:'Warner Bros'},
+    {s:'WBD',n:'Warner Bros. Discovery'},
     {s:'BIIB',n:'Biogen'},
     {s:'ILMN',n:'Illumina'},
     {s:'XEL',n:'Xcel Energy'},
@@ -261,49 +256,43 @@ const STOCKS = {
     {s:'ZS',n:'Zscaler'},
     {s:'FAST',n:'Fastenal'},
     {s:'TEAM',n:'Atlassian'},
-    {s:'GEHC',n:'GE Healthcare'},
-    {s:'TTD',n:'Trade Desk'},
+    {s:'GEHC',n:'GE HealthCare'},
+    {s:'TTD',n:'The Trade Desk'},
     {s:'ANSS',n:'ANSYS'},
     {s:'DDOG',n:'Datadog'},
     {s:'VRSK',n:'Verisk Analytics'},
     {s:'SBUX',n:'Starbucks'},
     {s:'GILD',n:'Gilead Sciences'},
-    {s:'LULU',n:'Lululemon'},
+    {s:'LULU',n:'Lululemon Athletica'},
     {s:'CEG',n:'Constellation Energy'},
-    {s:'CHTR',n:'Charter Comm'},
-    {s:'NXPI',n:'NXP Semi'},
+    {s:'CHTR',n:'Charter Communications'},
+    {s:'NXPI',n:'NXP Semiconductors'},
     {s:'EBAY',n:'eBay'},
     {s:'PYPL',n:'PayPal'},
     {s:'PDD',n:'PDD Holdings'},
     {s:'MNST',n:'Monster Beverage'},
-    {s:'VRTX',n:'Vertex Pharma'},
-    {s:'CSGP',n:'CoStar'},
+    {s:'VRTX',n:'Vertex Pharmaceuticals'},
+    {s:'CSGP',n:'CoStar Group'},
     {s:'WDAY',n:'Workday'},
     {s:'KDP',n:'Keurig Dr Pepper'},
-    {s:'CCEP',n:'Coca-Cola Europacific'},
-    {s:'TTWO',n:'Take-Two'},
+    {s:'CCEP',n:'Coca-Cola Europacific Partners'},
+    {s:'TTWO',n:'Take-Two Interactive'},
     {s:'ENPH',n:'Enphase Energy'},
-    {s:'ZM',n:'Zoom'},
+    {s:'ZM',n:'Zoom Video'},
     {s:'OKTA',n:'Okta'},
-    {s:'COIN',n:'Coinbase'},
-    {s:'PLTR',n:'Palantir'},
-    {s:'SNOW',n:'Snowflake'},
-    {s:'NET',n:'Cloudflare'},
-    {s:'SHOP',n:'Shopify'},
-    {s:'UBER',n:'Uber'},
-    {s:'RBLX',n:'Roblox'},
-    {s:'HOOD',n:'Robinhood'},
-    {s:'AFRM',n:'Affirm'},
-    {s:'RIVN',n:'Rivian'},
-    {s:'LCID',n:'Lucid Group'},
-    {s:'JD',n:'JD.com'},
-    {s:'MPWR',n:'Monolithic Power'},
-    {s:'SMCI',n:'Super Micro'},
+    {s:'SMCI',n:'Super Micro Computer'},
     {s:'ARM',n:'ARM Holdings'},
     {s:'MDB',n:'MongoDB'},
-    {s:'APP',n:'Applovin'},
+    {s:'APP',n:'AppLovin'},
     {s:'INTC',n:'Intel'},
-    {s:'TEMU',n:'PDD Holdings B'}
+    {s:'MSTR',n:'MicroStrategy'},
+    {s:'CSCO',n:'Cisco Systems'},
+    {s:'ADP',n:'Automatic Data Processing'},
+    {s:'MAR',n:'Marriott International'},
+    {s:'ROP',n:'Roper Technologies'},
+    {s:'EXC',n:'Exelon'},
+    {s:'VRSN',n:'Verisign'},
+    {s:'WMT',n:'Walmart'}
   ],
   SP500: [
     {s:'MMM',n:'3M'},
@@ -338,7 +327,7 @@ const STOCKS = {
     {s:'AMT',n:'American Tower'},
     {s:'AWK',n:'American Water'},
     {s:'AMP',n:'Ameriprise'},
-    {s:'ABC',n:'AmerisourceBergen'},
+    {s:'COR',n:'Cencora'},
     {s:'AME',n:'AMETEK'},
     {s:'AMGN',n:'Amgen'},
     {s:'APH',n:'Amphenol'},
@@ -1041,9 +1030,14 @@ window.sortResults = val => {
 };
 
 // ── Render ────────────────────────────────────────────────────────────────────
+let chartObserver = null;
+
 function renderCards() {
+  // Destroy all existing charts
   Object.values(activeCharts).forEach(c=>{try{c.remove()}catch(e){}});
   activeCharts={};
+  if(chartObserver){ chartObserver.disconnect(); chartObserver=null; }
+
   document.getElementById('resultCount').textContent=filteredSyms.length;
   document.getElementById('summaryBar').classList.add('visible');
   const grid=document.getElementById('cardsGrid');
@@ -1053,7 +1047,11 @@ function renderCards() {
       <div class="empty-sub">Kein Wert erfuellt diesen Filter.</div></div>`;
     return;
   }
-  grid.innerHTML=filteredSyms.map(sym=>{
+
+  // Deduplicate symbols (important for "Alle" tab)
+  const uniqueSyms = [...new Set(filteredSyms)];
+
+  grid.innerHTML=uniqueSyms.map(sym=>{
     const {name,metrics:m,indices}=stockData[sym];
     const c1=m.change1d??0,c30=m.change30d??0;
     const cls1=c1>=0?'up':'down',cls30=c30>=0?'up':'down';
@@ -1075,16 +1073,38 @@ function renderCards() {
         <div class="stat"><div class="sl">MA50</div><div class="sv">${fmt(m.ma50)}</div></div>
         <div class="stat"><div class="sl">Vol</div><div class="sv">${fmtK(m.volume)}</div></div>
       </div>
-      <div class="chart-wrap" id="chart-${sym.replace(/\./g,'_').replace(/\//g,'_')}"></div>
+      <div class="chart-wrap" id="chart-${sym.replace(/\./g,'_').replace(/\//g,'_')}" data-sym="${sym}"></div>
     </div>`;
   }).join('');
-  requestAnimationFrame(()=>filteredSyms.forEach(s=>renderMiniChart(s)));
+
+  // IntersectionObserver: render chart only when visible, destroy when not
+  chartObserver = new IntersectionObserver((entries)=>{
+    entries.forEach(entry=>{
+      const el=entry.target;
+      const sym=el.dataset.sym;
+      if(entry.isIntersecting){
+        if(!activeCharts[sym]) renderMiniChart(sym);
+      } else {
+        if(activeCharts[sym]){
+          try{ activeCharts[sym].remove(); }catch(e){}
+          delete activeCharts[sym];
+          el.innerHTML='';
+        }
+      }
+    });
+  },{rootMargin:'200px 0px', threshold:0});
+
+  requestAnimationFrame(()=>{
+    document.querySelectorAll('.chart-wrap[data-sym]').forEach(el=>{
+      chartObserver.observe(el);
+    });
+  });
 }
 
 function renderMiniChart(sym) {
   const id=`chart-${sym.replace(/\./g,'_').replace(/\//g,'_')}`;
   const el=document.getElementById(id);
-  if(!el) return;
+  if(!el||!stockData[sym]?.candles?.length) return;
   const {candles,metrics:m}=stockData[sym];
   const chart=LightweightCharts.createChart(el,{
     width:el.clientWidth,height:155,
