@@ -1089,14 +1089,25 @@ function applyCurrentFilter() {
   if(activeIndex!=='ALL') syms=syms.filter(s=>(stockData[s].indices||[]).includes(activeIndex));
   syms=syms.filter(sym=>{
     const m=stockData[sym].metrics;
+    const candles=stockData[sym].candles||[];
     if(!m) return false;
     if(activeFilter==='all') return true;
     if(activeFilter.startsWith('custom:')) {
       try {
+        // range(days, pct): alle Schlusskurse der letzten `days` Tage
+        // liegen innerhalb ±pct% des aktuellen Schlusskurses
+        const rangeFunc = (days, pct) => {
+          if(!candles.length) return false;
+          const slice = candles.slice(-Math.max(days,1));
+          const ref = m.close;
+          const lo = ref * (1 - pct/100);
+          const hi = ref * (1 + pct/100);
+          return slice.every(c => c.close >= lo && c.close <= hi);
+        };
         return !!(new Function('close','open','high','low','volume','ma20','ma50','ma200',
-          'rsi','change1d','change30d','high52w','low52w',`return !!(${activeFilter.slice(7)})`)
+          'rsi','change1d','change30d','high52w','low52w','range',`return !!(${activeFilter.slice(7)})`)
           (m.close,m.open,m.high,m.low,m.volume,m.ma20,m.ma50,m.ma200,
-           m.rsi,m.change1d,m.change30d,m.high52w,m.low52w));
+           m.rsi,m.change1d,m.change30d,m.high52w,m.low52w,rangeFunc));
       } catch{ return false; }
     }
     return true;
@@ -1511,7 +1522,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
       <div style="background:var(--surf2);border-radius:10px;padding:10px 12px;margin-bottom:16px">
         <div style="font-size:10px;color:var(--muted);margin-bottom:7px;text-transform:uppercase;letter-spacing:.5px">Verfügbare Variablen</div>
         <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">
-          <code class="hint-code">close</code><code class="hint-code">open</code><code class="hint-code">high</code><code class="hint-code">low</code><code class="hint-code">volume</code><code class="hint-code">ma20</code><code class="hint-code">ma50</code><code class="hint-code">ma200</code><code class="hint-code">rsi</code><code class="hint-code">change1d</code><code class="hint-code">change30d</code><code class="hint-code">high52w</code><code class="hint-code">low52w</code>
+          <code class="hint-code">close</code><code class="hint-code">open</code><code class="hint-code">high</code><code class="hint-code">low</code><code class="hint-code">volume</code><code class="hint-code">ma20</code><code class="hint-code">ma50</code><code class="hint-code">ma200</code><code class="hint-code">rsi</code><code class="hint-code">change1d</code><code class="hint-code">change30d</code><code class="hint-code">high52w</code><code class="hint-code">low52w</code><code class="hint-code">range(tage, %)</code>
         </div>
         <div style="font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px">Beispiele</div>
         <div style="font-size:11px;color:var(--cyan);line-height:2;font-family:monospace">
@@ -1520,6 +1531,8 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
           <div onclick="fpSetExpr('close &gt;= high52w * 0.95')">close &gt;= high52w * 0.95</div>
           <div onclick="fpSetExpr('ma50 &gt; ma200 &amp;&amp; rsi &lt; 50')">ma50 &gt; ma200 &amp;&amp; rsi &lt; 50</div>
           <div onclick="fpSetExpr('change30d &lt; -10 &amp;&amp; rsi &lt; 35')">change30d &lt; -10 &amp;&amp; rsi &lt; 35</div>
+          <div onclick="fpSetExpr('range(20, 5)')">range(20, 5) — Konsolidierung 20T ±5%</div>
+          <div onclick="fpSetExpr('range(10, 3) &amp;&amp; rsi &lt; 50')">range(10, 3) &amp;&amp; rsi &lt; 50</div>
         </div>
       </div>
       <button class="load-btn" onclick="saveFilterFavorite()" style="margin-bottom:10px">Speichern</button>
