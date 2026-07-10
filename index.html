@@ -1018,6 +1018,7 @@ function renderFilterChips() {
     chip.addEventListener('pointerdown', () => {
       pressTimer = setTimeout(() => { openFilterPopup(fav); }, 500);
     });
+    chip.addEventListener('pointermove', () => clearTimeout(pressTimer));
     chip.addEventListener('pointerup', () => clearTimeout(pressTimer));
     chip.addEventListener('pointercancel', () => clearTimeout(pressTimer));
     chip.addEventListener('click', () => {
@@ -1427,10 +1428,14 @@ window.closeModal = e => {
 function initSwipeToClose(sheetId, overlayId, closeFn) {
   const sheet   = document.getElementById(sheetId);
   const overlay = document.getElementById(overlayId);
-  let startY=0, currentY=0, dragging=false;
+  let startY=0, currentY=0, dragging=false, blocked=false;
+
+  const INTERACTIVE = 'input,textarea,select,button,[contenteditable]';
 
   sheet.addEventListener('touchstart', e=>{
-    // Only start drag when sheet is scrolled to top
+    // Don't interfere with taps on inputs, buttons, etc.
+    blocked = !!e.target.closest(INTERACTIVE);
+    if(blocked) return;
     if(sheet.scrollTop > 2) return;
     startY  = e.touches[0].clientY;
     currentY= startY;
@@ -1438,6 +1443,7 @@ function initSwipeToClose(sheetId, overlayId, closeFn) {
   },{passive:true});
 
   sheet.addEventListener('touchmove', e=>{
+    if(blocked) return;
     if(sheet.scrollTop > 2) return;
     const dy = e.touches[0].clientY - startY;
     if(dy < 5) return;
@@ -1450,6 +1456,7 @@ function initSwipeToClose(sheetId, overlayId, closeFn) {
   },{passive:true});
 
   sheet.addEventListener('touchend', ()=>{
+    if(blocked){ blocked=false; return; }
     if(!dragging){ sheet.style.transform=''; return; }
     sheet.classList.remove('dragging');
     const dy = currentY - startY;
