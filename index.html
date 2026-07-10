@@ -22,7 +22,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getFirestore, doc, setDoc, collection, getDocs }
+import { getFirestore, doc, setDoc, deleteDoc, collection, getDocs }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -820,8 +820,8 @@ onAuthStateChanged(auth, user => {
   if (user) {
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appShell').style.display='flex';
-    document.getElementById('userEmail').textContent=user.email;
     loadFromFirestore();
+    loadFilterFavorites();
   } else {
     document.getElementById('loginScreen').style.display='flex';
     document.getElementById('appShell').style.display='none';
@@ -972,20 +972,117 @@ window.setIndex = (idx,el) => {
   el.classList.add('active');
   applyCurrentFilter();
 };
-window.setFilter = (key,el) => {
-  activeFilter=key;
-  document.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));
-  el.classList.add('active');
-  document.getElementById('customFilterInput').value='';
+// ── Filter Favorites ──────────────────────────────────────────────────────────
+let filterFavorites = []; // [{id, name, expr}]
+let editingFilterId = null;
+
+async function loadFilterFavorites() {
+  if (!currentUser) return;
+  try {
+    const snap = await getDocs(collection(db,'users',currentUser.uid,'filters'));
+    filterFavorites = [];
+    snap.forEach(d => filterFavorites.push({id: d.id, ...d.data()}));
+    renderFilterChips();
+  } catch(e) { console.error('loadFilterFavorites:', e); }
+}
+
+async function saveFilterFavoriteToFirestore(fav) {
+  if (!currentUser) return;
+  await setDoc(doc(db,'users',currentUser.uid,'filters',fav.id), {name: fav.name, expr: fav.expr});
+}
+
+async function deleteFilterFavoriteFromFirestore(id) {
+  if (!currentUser) return;
+  await deleteDoc(doc(db,'users',currentUser.uid,'filters',id));
+}
+
+function renderFilterChips() {
+  const container = document.getElementById('filterChips');
+  // Keep "Alle" chip and "+" button, rebuild favorites in between
+  const allChip = document.getElementById('chipAll');
+  container.innerHTML = '';
+  container.appendChild(allChip);
+  filterFavorites.forEach(fav => {
+    const chip = document.createElement('div');
+    chip.className = 'filter-chip';
+    chip.textContent = fav.name;
+    chip.dataset.id = fav.id;
+    let pressTimer;
+    chip.addEventListener('pointerdown', () => {
+      pressTimer = setTimeout(() => { openFilterPopup(fav); }, 500);
+    });
+    chip.addEventListener('pointerup', () => clearTimeout(pressTimer));
+    chip.addEventListener('pointercancel', () => clearTimeout(pressTimer));
+    chip.addEventListener('click', () => {
+      activeFilter = 'custom:' + fav.expr;
+      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+      chip.classList.add('active');
+      applyCurrentFilter();
+    });
+    container.appendChild(chip);
+  });
+  const addBtn = document.createElement('button');
+  addBtn.className = 'filter-add-btn';
+  addBtn.textContent = '＋';
+  addBtn.onclick = () => openFilterPopup(null);
+  container.appendChild(addBtn);
+}
+
+window.setFilterAll = () => {
+  activeFilter = 'all';
+  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
+  document.getElementById('chipAll').classList.add('active');
   applyCurrentFilter();
 };
-window.applyCustomFilter = () => {
-  const expr=document.getElementById('customFilterInput').value.trim();
-  if(!expr) return;
-  document.querySelectorAll('.filter-chip').forEach(c=>c.classList.remove('active'));
-  activeFilter='custom:'+expr;
-  applyCurrentFilter();
+
+window.openFilterPopup = (fav) => {
+  editingFilterId = fav ? fav.id : null;
+  document.getElementById('filterPopupTitle').textContent = fav ? 'Filter bearbeiten' : 'Filter hinzufügen';
+  document.getElementById('fpName').value = fav ? fav.name : '';
+  document.getElementById('fpExpr').value = fav ? fav.expr : '';
+  document.getElementById('fpDeleteBtn').style.display = fav ? 'block' : 'none';
+  document.getElementById('filterPopupOverlay').classList.add('visible');
+  setTimeout(() => document.getElementById('fpName').focus(), 300);
 };
+
+window.closeFilterPopup = (e) => {
+  if (!e || e.target === document.getElementById('filterPopupOverlay'))
+    document.getElementById('filterPopupOverlay').classList.remove('visible');
+};
+
+window.fpSetExpr = (expr) => {
+  document.getElementById('fpExpr').value = expr.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
+};
+
+window.saveFilterFavorite = async () => {
+  const name = document.getElementById('fpName').value.trim();
+  const expr = document.getElementById('fpExpr').value.trim();
+  if (!name || !expr) return;
+  const id = editingFilterId || 'f_' + Date.now();
+  const fav = {id, name, expr};
+  const idx = filterFavorites.findIndex(f => f.id === id);
+  if (idx >= 0) filterFavorites[idx] = fav; else filterFavorites.push(fav);
+  renderFilterChips();
+  document.getElementById('filterPopupOverlay').classList.remove('visible');
+  await saveFilterFavoriteToFirestore(fav);
+};
+
+window.deleteFilterFavorite = async () => {
+  if (!editingFilterId) return;
+  filterFavorites = filterFavorites.filter(f => f.id !== editingFilterId);
+  if (activeFilter === 'custom:' + (filterFavorites.find(f=>f.id===editingFilterId)?.expr||'')) {
+    activeFilter = 'all';
+  }
+  renderFilterChips();
+  document.getElementById('filterPopupOverlay').classList.remove('visible');
+  if (activeFilter === 'all') {
+    document.getElementById('chipAll').classList.add('active');
+    applyCurrentFilter();
+  }
+  await deleteFilterFavoriteFromFirestore(editingFilterId);
+};
+
+
 
 function applyCurrentFilter() {
   let syms=Object.keys(stockData);
@@ -1002,18 +1099,7 @@ function applyCurrentFilter() {
            m.rsi,m.change1d,m.change30d,m.high52w,m.low52w));
       } catch{ return false; }
     }
-    switch(activeFilter){
-      case 'above_ma50':  return m.ma50&&m.close>m.ma50;
-      case 'below_ma50':  return m.ma50&&m.close<m.ma50;
-      case 'above_ma200': return m.ma200&&m.close>m.ma200;
-      case 'near_high':   return m.high52w&&m.close>=m.high52w*0.97;
-      case 'near_low':    return m.low52w&&m.close<=m.low52w*1.03;
-      case 'strong_up':   return m.change30d>5;
-      case 'strong_down': return m.change30d<-5;
-      case 'rsi_over':    return m.rsi&&m.rsi>70;
-      case 'rsi_under':   return m.rsi&&m.rsi<30;
-      default: return true;
-    }
+    return true;
   });
   filteredSyms=syms;
   renderCards();
@@ -1031,12 +1117,17 @@ window.sortResults = val => {
 
 // ── Render ────────────────────────────────────────────────────────────────────
 let chartObserver = null;
+let scrollObserver = null;
+const PAGE_SIZE = 20;
+let currentPage = 0;
 
 function renderCards() {
+  currentPage = 0;
   // Destroy all existing charts
   Object.values(activeCharts).forEach(c=>{try{c.remove()}catch(e){}});
   activeCharts={};
   if(chartObserver){ chartObserver.disconnect(); chartObserver=null; }
+  if(scrollObserver){ scrollObserver.disconnect(); scrollObserver=null; }
 
   document.getElementById('resultCount').textContent=filteredSyms.length;
   document.getElementById('summaryBar').classList.add('visible');
@@ -1048,57 +1139,94 @@ function renderCards() {
     return;
   }
 
-  // Deduplicate symbols (important for "Alle" tab)
+  grid.innerHTML='';
+  appendCards();
+}
+
+function cardHTML(sym) {
+  const {name,metrics:m,indices}=stockData[sym];
+  const c1=m.change1d??0,c30=m.change30d??0;
+  const cls1=c1>=0?'up':'down',cls30=c30>=0?'up':'down';
+  const badges=(indices||[]).map(i=>`<span class="badge">${i}</span>`).join('');
+  return `<div class="stock-card" onclick="openModal('${sym}')">
+    <div class="card-header">
+      <div>
+        <div class="stock-name">${name}</div>
+        <div class="stock-meta">${sym} ${badges}</div>
+      </div>
+      <div class="price-block">
+        <div class="price-current">${fmt(m.close)}</div>
+        <div class="price-change ${cls1}">${c1>=0?'+':''}${fmt(c1)}%</div>
+      </div>
+    </div>
+    <div class="card-stats">
+      <div class="stat"><div class="sl">30T</div><div class="sv ${cls30}">${c30>=0?'+':''}${fmt(c30)}%</div></div>
+      <div class="stat"><div class="sl">RSI</div><div class="sv">${m.rsi?fmt(m.rsi,0):'-'}</div></div>
+      <div class="stat"><div class="sl">MA50</div><div class="sv">${fmt(m.ma50)}</div></div>
+      <div class="stat"><div class="sl">Vol</div><div class="sv">${fmtK(m.volume)}</div></div>
+    </div>
+    <div class="chart-wrap" id="chart-${sym.replace(/\./g,'_').replace(/\//g,'_')}" data-sym="${sym}"></div>
+  </div>`;
+}
+
+function appendCards() {
+  // Deduplicate
   const uniqueSyms = [...new Set(filteredSyms)];
+  const grid = document.getElementById('cardsGrid');
 
-  grid.innerHTML=uniqueSyms.map(sym=>{
-    const {name,metrics:m,indices}=stockData[sym];
-    const c1=m.change1d??0,c30=m.change30d??0;
-    const cls1=c1>=0?'up':'down',cls30=c30>=0?'up':'down';
-    const badges=(indices||[]).map(i=>`<span class="badge">${i}</span>`).join('');
-    return `<div class="stock-card" onclick="openModal('${sym}')">
-      <div class="card-header">
-        <div>
-          <div class="stock-name">${name}</div>
-          <div class="stock-meta">${sym} ${badges}</div>
-        </div>
-        <div class="price-block">
-          <div class="price-current">${fmt(m.close)}</div>
-          <div class="price-change ${cls1}">${c1>=0?'+':''}${fmt(c1)}%</div>
-        </div>
-      </div>
-      <div class="card-stats">
-        <div class="stat"><div class="sl">30T</div><div class="sv ${cls30}">${c30>=0?'+':''}${fmt(c30)}%</div></div>
-        <div class="stat"><div class="sl">RSI</div><div class="sv">${m.rsi?fmt(m.rsi,0):'-'}</div></div>
-        <div class="stat"><div class="sl">MA50</div><div class="sv">${fmt(m.ma50)}</div></div>
-        <div class="stat"><div class="sl">Vol</div><div class="sv">${fmtK(m.volume)}</div></div>
-      </div>
-      <div class="chart-wrap" id="chart-${sym.replace(/\./g,'_').replace(/\//g,'_')}" data-sym="${sym}"></div>
-    </div>`;
-  }).join('');
+  // Remove old sentinel if present
+  const oldSentinel = document.getElementById('scroll-sentinel');
+  if(oldSentinel) oldSentinel.remove();
+  if(scrollObserver){ scrollObserver.disconnect(); scrollObserver=null; }
 
-  // IntersectionObserver: render chart only when visible, destroy when not
-  chartObserver = new IntersectionObserver((entries)=>{
-    entries.forEach(entry=>{
-      const el=entry.target;
-      const sym=el.dataset.sym;
-      if(entry.isIntersecting){
-        if(!activeCharts[sym]) renderMiniChart(sym);
-      } else {
-        if(activeCharts[sym]){
-          try{ activeCharts[sym].remove(); }catch(e){}
-          delete activeCharts[sym];
-          el.innerHTML='';
+  const start = currentPage * PAGE_SIZE;
+  const slice = uniqueSyms.slice(start, start + PAGE_SIZE);
+  if(!slice.length) return;
+
+  const frag = document.createDocumentFragment();
+  slice.forEach(sym => {
+    const div = document.createElement('div');
+    div.innerHTML = cardHTML(sym);
+    frag.appendChild(div.firstElementChild);
+  });
+  grid.appendChild(frag);
+  currentPage++;
+
+  // Chart observer: render chart only when card is visible, destroy when not
+  if(!chartObserver){
+    chartObserver = new IntersectionObserver((entries)=>{
+      entries.forEach(entry=>{
+        const el=entry.target;
+        const sym=el.dataset.sym;
+        if(entry.isIntersecting){
+          if(!activeCharts[sym]) renderMiniChart(sym);
+        } else {
+          if(activeCharts[sym]){
+            try{ activeCharts[sym].remove(); }catch(e){}
+            delete activeCharts[sym];
+            el.innerHTML='';
+          }
         }
-      }
-    });
-  },{rootMargin:'200px 0px', threshold:0});
-
+      });
+    },{rootMargin:'200px 0px', threshold:0});
+  }
   requestAnimationFrame(()=>{
-    document.querySelectorAll('.chart-wrap[data-sym]').forEach(el=>{
+    grid.querySelectorAll('.chart-wrap[data-sym]').forEach(el=>{
       chartObserver.observe(el);
     });
   });
+
+  // Add sentinel for next page if more cards exist
+  if(currentPage * PAGE_SIZE < uniqueSyms.length){
+    const sentinel = document.createElement('div');
+    sentinel.id = 'scroll-sentinel';
+    sentinel.style.height = '1px';
+    grid.appendChild(sentinel);
+    scrollObserver = new IntersectionObserver((entries)=>{
+      if(entries[0].isIntersecting) appendCards();
+    },{rootMargin:'300px 0px'});
+    scrollObserver.observe(sentinel);
+  }
 }
 
 function renderMiniChart(sym) {
@@ -1199,7 +1327,7 @@ window.addEventListener('resize',()=>{
 :root{--bg:#080c14;--surf:#0f1623;--surf2:#131d2e;--border:#1a2540;--accent:#2563eb;--cyan:#06b6d4;--green:#22c55e;--red:#ef4444;--purple:#a855f7;--text:#e2e8f0;--muted:#475569;--dim:#1e293b}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
 body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;min-height:100vh;overflow-x:hidden;padding-top:0;padding-bottom:env(safe-area-inset-bottom)}
-header{padding-top:calc(12px + env(safe-area-inset-top)) !important}
+header{padding-top:calc(4px + env(safe-area-inset-top)) !important}
 .cards-grid{padding-bottom:calc(60px + env(safe-area-inset-bottom)) !important}
 #loginScreen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:22px;background:radial-gradient(ellipse at 50% 0%,#0f1e3a,var(--bg) 70%)}
 .login-logo{font-size:30px;font-weight:800;letter-spacing:-1px;background:linear-gradient(135deg,var(--accent),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
@@ -1242,8 +1370,11 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .filter-input:focus{border-color:var(--cyan)}
 .filter-input::placeholder{color:var(--muted)}
 .apply-btn{padding:7px 12px;background:var(--accent);border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
-.filter-hint{font-size:10px;color:var(--muted);margin-top:5px;line-height:1.6}
-.filter-hint code{background:var(--surf2);padding:1px 4px;border-radius:3px;color:var(--cyan);font-family:monospace}
+.filter-add-btn{flex-shrink:0;padding:5px 13px;border-radius:20px;border:1px dashed var(--accent);background:transparent;color:var(--accent);font-size:16px;font-weight:700;cursor:pointer;line-height:1}
+.hint-code{background:var(--surf);border:1px solid var(--border);padding:3px 7px;border-radius:6px;color:var(--cyan);font-size:11px;font-family:monospace;cursor:pointer}
+.hint-code:active{background:var(--dim)}
+#filterPopupSheet .filter-input{display:block}
+
 .summary-bar{display:none;padding:7px 14px;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
 .summary-bar.visible{display:flex}
 .result-count{font-size:12px;color:var(--muted)}
@@ -1300,7 +1431,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     <div class="hrow">
       <div class="logo">Stock Scanner</div>
       <div class="header-right">
-        <span class="user-email" id="userEmail"></span>
         <button class="logout-btn" onclick="doLogout()">Abmelden</button>
       </div>
     </div>
@@ -1326,26 +1456,9 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 
   <div class="filter-section" id="filterSection">
     <div class="filter-label">Filter</div>
-    <div class="filter-chips">
-      <div class="filter-chip active" onclick="setFilter('all',this)">Alle</div>
-      <div class="filter-chip" onclick="setFilter('above_ma50',this)">&#x25B2; MA50</div>
-      <div class="filter-chip" onclick="setFilter('below_ma50',this)">&#x25BC; MA50</div>
-      <div class="filter-chip" onclick="setFilter('above_ma200',this)">&#x25B2; MA200</div>
-      <div class="filter-chip" onclick="setFilter('near_high',this)">52W Hoch</div>
-      <div class="filter-chip" onclick="setFilter('near_low',this)">52W Tief</div>
-      <div class="filter-chip" onclick="setFilter('strong_up',this)">+5% 30T</div>
-      <div class="filter-chip" onclick="setFilter('strong_down',this)">-5% 30T</div>
-      <div class="filter-chip" onclick="setFilter('rsi_over',this)">RSI &gt;70</div>
-      <div class="filter-chip" onclick="setFilter('rsi_under',this)">RSI &lt;30</div>
-    </div>
-    <div class="custom-row">
-      <input class="filter-input" id="customFilterInput" placeholder="close > ma50 && rsi < 40"
-        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
-      <button class="apply-btn" onclick="applyCustomFilter()">Los</button>
-    </div>
-    <div class="filter-hint">
-      <code>close</code> <code>ma20</code> <code>ma50</code> <code>ma200</code>
-      <code>rsi</code> <code>change1d</code> <code>change30d</code> <code>high52w</code> <code>low52w</code>
+    <div class="filter-chips" id="filterChips">
+      <div class="filter-chip active" id="chipAll" onclick="setFilterAll()">Alle</div>
+      <button class="filter-add-btn" onclick="openFilterPopup(null)" title="Filter hinzufügen">＋</button>
     </div>
   </div>
 
@@ -1381,6 +1494,40 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     <div class="ms-grid" id="mStats"></div>
   </div>
 </div>
+<!-- Filter Popup -->
+<div class="modal-overlay" id="filterPopupOverlay" onclick="closeFilterPopup(event)">
+  <div class="modal-sheet" id="filterPopupSheet">
+    <div class="modal-handle"></div>
+    <div style="padding:0 14px 16px">
+      <div style="font-size:17px;font-weight:800;margin-bottom:14px" id="filterPopupTitle">Filter hinzufügen</div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px">Name</div>
+      <input class="filter-input" id="fpName" placeholder="z.B. Konsolidierung"
+        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+        style="width:100%;margin-bottom:14px;font-family:-apple-system,sans-serif"/>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px">Ausdruck</div>
+      <input class="filter-input" id="fpExpr" placeholder="close > ma50 && rsi < 40"
+        autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
+        style="width:100%;margin-bottom:12px;font-family:monospace"/>
+      <div style="background:var(--surf2);border-radius:10px;padding:10px 12px;margin-bottom:16px">
+        <div style="font-size:10px;color:var(--muted);margin-bottom:7px;text-transform:uppercase;letter-spacing:.5px">Verfügbare Variablen</div>
+        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">
+          <code class="hint-code">close</code><code class="hint-code">open</code><code class="hint-code">high</code><code class="hint-code">low</code><code class="hint-code">volume</code><code class="hint-code">ma20</code><code class="hint-code">ma50</code><code class="hint-code">ma200</code><code class="hint-code">rsi</code><code class="hint-code">change1d</code><code class="hint-code">change30d</code><code class="hint-code">high52w</code><code class="hint-code">low52w</code>
+        </div>
+        <div style="font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px">Beispiele</div>
+        <div style="font-size:11px;color:var(--cyan);line-height:2;font-family:monospace">
+          <div onclick="fpSetExpr('rsi &lt; 30 &amp;&amp; close &gt; ma200')">rsi &lt; 30 &amp;&amp; close &gt; ma200</div>
+          <div onclick="fpSetExpr('change1d &gt; 2')">change1d &gt; 2</div>
+          <div onclick="fpSetExpr('close &gt;= high52w * 0.95')">close &gt;= high52w * 0.95</div>
+          <div onclick="fpSetExpr('ma50 &gt; ma200 &amp;&amp; rsi &lt; 50')">ma50 &gt; ma200 &amp;&amp; rsi &lt; 50</div>
+          <div onclick="fpSetExpr('change30d &lt; -10 &amp;&amp; rsi &lt; 35')">change30d &lt; -10 &amp;&amp; rsi &lt; 35</div>
+        </div>
+      </div>
+      <button class="load-btn" onclick="saveFilterFavorite()" style="margin-bottom:10px">Speichern</button>
+      <button id="fpDeleteBtn" onclick="deleteFilterFavorite()" style="display:none;width:100%;padding:12px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:12px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer">Löschen</button>
+    </div>
+  </div>
+</div>
+
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js');
