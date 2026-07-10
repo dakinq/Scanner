@@ -2,7 +2,7 @@
 <html lang="de">
 <head>
 <meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
 <title>Stock Scanner</title>
 
 <!-- PWA / Home Screen -->
@@ -1178,7 +1178,7 @@ window.addEventListener('resize',()=>{
 <style>
 :root{--bg:#080c14;--surf:#0f1623;--surf2:#131d2e;--border:#1a2540;--accent:#2563eb;--cyan:#06b6d4;--green:#22c55e;--red:#ef4444;--purple:#a855f7;--text:#e2e8f0;--muted:#475569;--dim:#1e293b}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;min-height:100vh;overflow-x:hidden;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;min-height:100vh;overflow-x:hidden;padding-top:0;padding-bottom:env(safe-area-inset-bottom)}
 header{padding-top:calc(12px + env(safe-area-inset-top)) !important}
 .cards-grid{padding-bottom:calc(60px + env(safe-area-inset-bottom)) !important}
 #loginScreen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:22px;background:radial-gradient(ellipse at 50% 0%,#0f1e3a,var(--bg) 70%)}
@@ -1188,7 +1188,7 @@ header{padding-top:calc(12px + env(safe-area-inset-top)) !important}
 .login-btn svg{width:20px;height:20px}
 .login-note{font-size:11px;color:var(--muted);text-align:center;line-height:1.6}
 #appShell{display:none;flex-direction:column;min-height:100vh}
-header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 14px 10px}
+header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 14px 10px;overflow:hidden}
 .hrow{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .logo{font-size:17px;font-weight:800;letter-spacing:-.5px;background:linear-gradient(90deg,var(--accent),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .header-right{display:flex;align-items:center;gap:8px}
