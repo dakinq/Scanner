@@ -1041,6 +1041,8 @@ window.openFilterPopup = (fav) => {
   document.getElementById('fpName').value = fav ? fav.name : '';
   document.getElementById('fpExpr').value = fav ? fav.expr : '';
   document.getElementById('fpDeleteBtn').style.display = fav ? 'block' : 'none';
+  document.getElementById('fpVarInfo').style.display = 'none';
+  fpBuildChips();
   document.getElementById('filterPopupOverlay').classList.add('visible');
   setTimeout(() => document.getElementById('fpName').focus(), 300);
 };
@@ -1050,9 +1052,72 @@ window.closeFilterPopup = (e) => {
     document.getElementById('filterPopupOverlay').classList.remove('visible');
 };
 
-window.fpSetExpr = (expr) => {
-  document.getElementById('fpExpr').value = expr.replace(/&lt;/g,'<').replace(/&gt;/g,'>').replace(/&amp;/g,'&');
-};
+// ── Filter Popup Variable Chips ───────────────────────────────────────────────
+const FP_VARS = [
+  { name: 'close',      insert: 'close',         desc: 'Aktueller Schlusskurs',                        example: 'close > 100' },
+  { name: 'open',       insert: 'open',           desc: 'Eröffnungskurs des letzten Handelstages',      example: 'close > open' },
+  { name: 'high',       insert: 'high',           desc: 'Tageshoch des letzten Handelstages',           example: 'high > high52w * 0.99' },
+  { name: 'low',        insert: 'low',            desc: 'Tagestief des letzten Handelstages',           example: 'low < ma50' },
+  { name: 'volume',     insert: 'volume',         desc: 'Handelsvolumen des letzten Tages',             example: 'volume > 1000000' },
+  { name: 'ma20',       insert: 'ma20',           desc: 'Gleitender Durchschnitt über 20 Tage',         example: 'close > ma20' },
+  { name: 'ma50',       insert: 'ma50',           desc: 'Gleitender Durchschnitt über 50 Tage',         example: 'ma20 > ma50' },
+  { name: 'ma200',      insert: 'ma200',          desc: 'Gleitender Durchschnitt über 200 Tage',        example: 'close > ma200 && ma50 > ma200' },
+  { name: 'rsi',        insert: 'rsi',            desc: 'Relative Strength Index (14 Perioden, 0–100)', example: 'rsi < 30' },
+  { name: 'change1d',   insert: 'change1d',       desc: 'Kursveränderung heute in %',                  example: 'change1d > 3' },
+  { name: 'change30d',  insert: 'change30d',      desc: 'Kursveränderung der letzten 30 Tage in %',    example: 'change30d > 10' },
+  { name: 'high52w',    insert: 'high52w',        desc: '52-Wochen-Hoch',                               example: 'close >= high52w * 0.95' },
+  { name: 'low52w',     insert: 'low52w',         desc: '52-Wochen-Tief',                               example: 'close <= low52w * 1.05' },
+  { name: 'range()',    insert: 'range(20, 5)',    desc: 'Konsolidierung: alle Schlusskurse der letzten X Tage innerhalb ±Y% des aktuellen Kurses', example: 'range(20, 5) && rsi < 50' },
+];
+
+const FP_OPS = [
+  { label: '>', insert: ' > ' },
+  { label: '<', insert: ' < ' },
+  { label: '>=', insert: ' >= ' },
+  { label: '<=', insert: ' <= ' },
+  { label: '==', insert: ' == ' },
+  { label: '&&', insert: ' && ' },
+  { label: '||', insert: ' || ' },
+  { label: '(', insert: '(' },
+  { label: ')', insert: ')' },
+];
+
+function fpAppend(text) {
+  const el = document.getElementById('fpExpr');
+  el.value = el.value + text;
+  el.focus();
+}
+
+function fpBuildChips() {
+  // Operators
+  const opContainer = document.getElementById('fpOpChips');
+  opContainer.innerHTML = '';
+  FP_OPS.forEach(op => {
+    const chip = document.createElement('span');
+    chip.className = 'op-code';
+    chip.textContent = op.label;
+    chip.addEventListener('click', () => fpAppend(op.insert));
+    opContainer.appendChild(chip);
+  });
+
+  // Variables
+  const varContainer = document.getElementById('fpVarChips');
+  varContainer.innerHTML = '';
+  FP_VARS.forEach(v => {
+    const chip = document.createElement('code');
+    chip.className = 'hint-code';
+    chip.textContent = v.name;
+    chip.addEventListener('click', () => {
+      fpAppend(v.insert);
+      document.getElementById('fpInfoName').textContent = v.name;
+      document.getElementById('fpInfoDesc').textContent = v.desc;
+      document.getElementById('fpInfoExample').textContent = 'z.B. ' + v.example;
+      document.getElementById('fpVarInfo').style.display = 'block';
+    });
+    varContainer.appendChild(chip);
+  });
+}
+
 
 window.saveFilterFavorite = async () => {
   const name = document.getElementById('fpName').value.trim();
@@ -1381,10 +1446,13 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .filter-input:focus{border-color:var(--cyan)}
 .filter-input::placeholder{color:var(--muted)}
 .apply-btn{padding:7px 12px;background:var(--accent);border:none;border-radius:8px;color:#fff;font-size:12px;font-weight:700;cursor:pointer;white-space:nowrap}
-.filter-add-btn{flex-shrink:0;padding:5px 13px;border-radius:20px;border:1px dashed var(--accent);background:transparent;color:var(--accent);font-size:16px;font-weight:700;cursor:pointer;line-height:1}
-.hint-code{background:var(--surf);border:1px solid var(--border);padding:3px 7px;border-radius:6px;color:var(--cyan);font-size:11px;font-family:monospace;cursor:pointer}
+.filter-add-btn{flex-shrink:0;padding:7px 15px;border-radius:20px;border:1px dashed var(--accent);background:transparent;color:var(--accent);font-size:18px;font-weight:700;cursor:pointer;line-height:1}
+.hint-code{background:var(--surf);border:1px solid var(--border);padding:7px 12px;border-radius:8px;color:var(--cyan);font-size:13px;font-family:monospace;cursor:pointer;display:inline-block;-webkit-tap-highlight-color:transparent}
 .hint-code:active{background:var(--dim)}
-#filterPopupSheet .filter-input{display:block}
+.op-code{background:var(--dim);border:1px solid var(--border);padding:7px 12px;border-radius:8px;color:var(--text);font-size:15px;font-family:monospace;cursor:pointer;display:inline-block;font-weight:700;-webkit-tap-highlight-color:transparent}
+.op-code:active{background:var(--surf2)}
+#filterPopupSheet .filter-input{display:block;font-size:15px;padding:10px 12px}
+#fpVarInfo{font-size:13px}
 
 .summary-bar{display:none;padding:7px 14px;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
 .summary-bar.visible{display:flex}
@@ -1519,22 +1587,19 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
       <input class="filter-input" id="fpExpr" placeholder="close > ma50 && rsi < 40"
         autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
         style="width:100%;margin-bottom:12px;font-family:monospace"/>
-      <div style="background:var(--surf2);border-radius:10px;padding:10px 12px;margin-bottom:16px">
-        <div style="font-size:10px;color:var(--muted);margin-bottom:7px;text-transform:uppercase;letter-spacing:.5px">Verfügbare Variablen</div>
-        <div style="display:flex;flex-wrap:wrap;gap:5px;margin-bottom:8px">
-          <code class="hint-code">close</code><code class="hint-code">open</code><code class="hint-code">high</code><code class="hint-code">low</code><code class="hint-code">volume</code><code class="hint-code">ma20</code><code class="hint-code">ma50</code><code class="hint-code">ma200</code><code class="hint-code">rsi</code><code class="hint-code">change1d</code><code class="hint-code">change30d</code><code class="hint-code">high52w</code><code class="hint-code">low52w</code><code class="hint-code">range(tage, %)</code>
-        </div>
-        <div style="font-size:10px;color:var(--muted);margin-bottom:5px;text-transform:uppercase;letter-spacing:.5px">Beispiele</div>
-        <div style="font-size:11px;color:var(--cyan);line-height:2;font-family:monospace">
-          <div onclick="fpSetExpr('rsi &lt; 30 &amp;&amp; close &gt; ma200')">rsi &lt; 30 &amp;&amp; close &gt; ma200</div>
-          <div onclick="fpSetExpr('change1d &gt; 2')">change1d &gt; 2</div>
-          <div onclick="fpSetExpr('close &gt;= high52w * 0.95')">close &gt;= high52w * 0.95</div>
-          <div onclick="fpSetExpr('ma50 &gt; ma200 &amp;&amp; rsi &lt; 50')">ma50 &gt; ma200 &amp;&amp; rsi &lt; 50</div>
-          <div onclick="fpSetExpr('change30d &lt; -10 &amp;&amp; rsi &lt; 35')">change30d &lt; -10 &amp;&amp; rsi &lt; 35</div>
-          <div onclick="fpSetExpr('range(20, 5)')">range(20, 5) — Konsolidierung 20T ±5%</div>
-          <div onclick="fpSetExpr('range(10, 3) &amp;&amp; rsi &lt; 50')">range(10, 3) &amp;&amp; rsi &lt; 50</div>
+
+      <div style="background:var(--surf2);border-radius:10px;padding:12px;margin-bottom:16px">
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Operatoren</div>
+        <div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:14px" id="fpOpChips"></div>
+        <div style="font-size:11px;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Variablen &amp; Funktionen</div>
+        <div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:12px" id="fpVarChips"></div>
+        <div id="fpVarInfo" style="display:none;background:var(--dim);border-radius:8px;padding:10px 12px">
+          <div style="font-size:13px;font-weight:700;color:var(--text);margin-bottom:4px" id="fpInfoName"></div>
+          <div style="font-size:12px;color:var(--muted);margin-bottom:6px" id="fpInfoDesc"></div>
+          <div style="font-size:12px;font-family:monospace;color:var(--cyan)" id="fpInfoExample"></div>
         </div>
       </div>
+
       <button class="load-btn" onclick="saveFilterFavorite()" style="margin-bottom:10px">Speichern</button>
       <button id="fpDeleteBtn" onclick="deleteFilterFavorite()" style="display:none;width:100%;padding:12px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:12px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer">Löschen</button>
     </div>
