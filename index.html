@@ -22,7 +22,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getFirestore, doc, setDoc, getDoc, collection, getDocs, writeBatch }
+import { getFirestore, doc, setDoc, collection, getDocs }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -38,132 +38,859 @@ const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
-// ── Firestore Storage ────────────────────────────────────────────────────────
+// ── Stock Lists ──────────────────────────────────────────────────────────────
+const STOCKS = {
+  DAX: [
+    {s:'ADS.DE',n:'Adidas'},{s:'AIR.DE',n:'Airbus'},{s:'ALV.DE',n:'Allianz'},
+    {s:'BAS.DE',n:'BASF'},{s:'BAYN.DE',n:'Bayer'},{s:'BEI.DE',n:'Beiersdorf'},
+    {s:'BMW.DE',n:'BMW'},{s:'BNR.DE',n:'Brenntag'},{s:'CBK.DE',n:'Commerzbank'},
+    {s:'CON.DE',n:'Continental'},{s:'DB1.DE',n:'Deutsche Boerse'},{s:'DBK.DE',n:'Deutsche Bank'},
+    {s:'DHL.DE',n:'DHL Group'},{s:'DTE.DE',n:'Deutsche Telekom'},{s:'DHER.DE',n:'Delivery Hero'},
+    {s:'ENR.DE',n:'Siemens Energy'},{s:'EOAN.DE',n:'E.ON'},{s:'FME.DE',n:'Fresenius Medical'},
+    {s:'FRE.DE',n:'Fresenius'},{s:'HEI.DE',n:'Heidelberg Mat.'},{s:'HEN3.DE',n:'Henkel'},
+    {s:'IFX.DE',n:'Infineon'},{s:'LIN.DE',n:'Linde'},{s:'MBG.DE',n:'Mercedes-Benz'},
+    {s:'MRK.DE',n:'Merck KGaA'},{s:'MTX.DE',n:'MTU Aero'},{s:'MUV2.DE',n:'Munich Re'},
+    {s:'PAH3.DE',n:'Porsche Holding'},{s:'P911.DE',n:'Porsche AG'},{s:'QIA.DE',n:'Qiagen'},
+    {s:'RHM.DE',n:'Rheinmetall'},{s:'RWE.DE',n:'RWE'},{s:'SAP.DE',n:'SAP'},
+    {s:'SHL.DE',n:'Siemens Healthineers'},{s:'SIE.DE',n:'Siemens'},{s:'SY1.DE',n:'Symrise'},
+    {s:'VNA.DE',n:'Vonovia'},{s:'VOW3.DE',n:'Volkswagen'},{s:'ZAL.DE',n:'Zalando'},
+    {s:'HFG.DE',n:'HelloFresh'}
+  ],
+  EUROSTOXX: [
+    {s:'ASML.AS',n:'ASML'},{s:'MC.PA',n:'LVMH'},{s:'SAN.PA',n:'Sanofi'},
+    {s:'TTE.PA',n:'TotalEnergies'},{s:'INGA.AS',n:'ING Group'},{s:'BNP.PA',n:'BNP Paribas'},
+    {s:'DG.PA',n:'Vinci'},{s:'OR.PA',n:"L'Oreal"},{s:'SAF.PA',n:'Safran'},
+    {s:'DSY.PA',n:'Dassault Systemes'},{s:'SU.PA',n:'Schneider Electric'},
+    {s:'KER.PA',n:'Kering'},{s:'EL.PA',n:'EssilorLuxottica'},{s:'ABI.BR',n:'AB InBev'},
+    {s:'PHIA.AS',n:'Philips'},{s:'AXA.PA',n:'AXA'},{s:'ENGI.PA',n:'Engie'},
+    {s:'ORA.PA',n:'Orange'},{s:'GLE.PA',n:'Societe Generale'},{s:'SGO.PA',n:'Saint-Gobain'},
+    {s:'CAP.PA',n:'Capgemini'},{s:'AD.AS',n:'Ahold Delhaize'},
+    {s:'BBVA.MC',n:'BBVA'},{s:'SAN.MC',n:'Santander'},{s:'ITX.MC',n:'Inditex'},
+    {s:'IBE.MC',n:'Iberdrola'},{s:'TEF.MC',n:'Telefonica'},
+    {s:'ISP.MI',n:'Intesa Sanpaolo'},{s:'ENI.MI',n:'ENI'},{s:'ENEL.MI',n:'Enel'},
+    {s:'UCG.MI',n:'UniCredit'},{s:'STM.MI',n:'STMicroelectronics'},
+    {s:'SAP.DE',n:'SAP'},{s:'SIE.DE',n:'Siemens'},{s:'ALV.DE',n:'Allianz'},
+    {s:'MUV2.DE',n:'Munich Re'},{s:'BAS.DE',n:'BASF'},{s:'BAYN.DE',n:'Bayer'},
+    {s:'BMW.DE',n:'BMW'},{s:'DBK.DE',n:'Deutsche Bank'},{s:'DTE.DE',n:'Deutsche Telekom'},
+    {s:'EOAN.DE',n:'E.ON'},{s:'IFX.DE',n:'Infineon'},{s:'MBG.DE',n:'Mercedes-Benz'},
+    {s:'RWE.DE',n:'RWE'},{s:'VOW3.DE',n:'Volkswagen'}
+  ],
+  SMI: [
+    {s:'NESN.SW',n:'Nestle'},{s:'ROG.SW',n:'Roche'},{s:'NOVN.SW',n:'Novartis'},
+    {s:'UBSG.SW',n:'UBS'},{s:'ABBN.SW',n:'ABB'},{s:'ZURN.SW',n:'Zurich Insurance'},
+    {s:'SREN.SW',n:'Swiss Re'},{s:'LONN.SW',n:'Lonza'},{s:'GIVN.SW',n:'Givaudan'},
+    {s:'SIKA.SW',n:'Sika'},{s:'PGHN.SW',n:'Partners Group'},{s:'SCMN.SW',n:'Swisscom'},
+    {s:'GEBN.SW',n:'Geberit'},{s:'SLHN.SW',n:'Swiss Life'},{s:'BALN.SW',n:'Baloise'},
+    {s:'ALC.SW',n:'Alcon'},{s:'CFR.SW',n:'Richemont'},{s:'SGSN.SW',n:'SGS'},
+    {s:'HOLN.SW',n:'Holcim'},{s:'KNIN.SW',n:'Kuehne+Nagel'}
+  ],
+  FTSE100: [
+    {s:'AZN.L',n:'AstraZeneca'},
+    {s:'SHEL.L',n:'Shell'},
+    {s:'HSBA.L',n:'HSBC'},
+    {s:'ULVR.L',n:'Unilever'},
+    {s:'BP.L',n:'BP'},
+    {s:'RIO.L',n:'Rio Tinto'},
+    {s:'GSK.L',n:'GSK'},
+    {s:'DGE.L',n:'Diageo'},
+    {s:'REL.L',n:'RELX'},
+    {s:'NG.L',n:'National Grid'},
+    {s:'VOD.L',n:'Vodafone'},
+    {s:'BATS.L',n:'British American Tobacco'},
+    {s:'AAL.L',n:'Anglo American'},
+    {s:'LSEG.L',n:'London Stock Exchange'},
+    {s:'BHP.L',n:'BHP'},
+    {s:'LLOY.L',n:'Lloyds Banking'},
+    {s:'NWG.L',n:'NatWest'},
+    {s:'BARC.L',n:'Barclays'},
+    {s:'PRU.L',n:'Prudential'},
+    {s:'ABF.L',n:'Associated British Foods'},
+    {s:'AHT.L',n:'Ashtead'},
+    {s:'BA.L',n:'BAE Systems'},
+    {s:'BNZL.L',n:'Bunzl'},
+    {s:'CCH.L',n:'Coca-Cola HBC'},
+    {s:'CNA.L',n:'Centrica'},
+    {s:'CPG.L',n:'Compass Group'},
+    {s:'CRDA.L',n:'Croda'},
+    {s:'CRH.L',n:'CRH'},
+    {s:'EXPN.L',n:'Experian'},
+    {s:'FRES.L',n:'Fresnillo'},
+    {s:'GLEN.L',n:'Glencore'},
+    {s:'HLN.L',n:'Haleon'},
+    {s:'IAG.L',n:'IAG'},
+    {s:'IMB.L',n:'Imperial Brands'},
+    {s:'INF.L',n:'Informa'},
+    {s:'IHG.L',n:'IHG Hotels'},
+    {s:'JD.L',n:'JD Sports'},
+    {s:'KGF.L',n:'Kingfisher'},
+    {s:'LAND.L',n:'Land Securities'},
+    {s:'LGEN.L',n:'Legal & General'},
+    {s:'MKS.L',n:'Marks & Spencer'},
+    {s:'MNDI.L',n:'Mondi'},
+    {s:'MRO.L',n:'Melrose'},
+    {s:'OCDO.L',n:'Ocado'},
+    {s:'PSN.L',n:'Persimmon'},
+    {s:'PSON.L',n:'Pearson'},
+    {s:'RKT.L',n:'Reckitt'},
+    {s:'RMV.L',n:'Rightmove'},
+    {s:'RR.L',n:'Rolls-Royce'},
+    {s:'SBRY.L',n:'Sainsbury'},
+    {s:'SDR.L',n:'Schroders'},
+    {s:'SGE.L',n:'Sage Group'},
+    {s:'SGRO.L',n:'Segro'},
+    {s:'SN.L',n:'Smith & Nephew'},
+    {s:'SSE.L',n:'SSE'},
+    {s:'STAN.L',n:'Standard Chartered'},
+    {s:'SVT.L',n:'Severn Trent'},
+    {s:'TSCO.L',n:'Tesco'},
+    {s:'TW.L',n:'Taylor Wimpey'},
+    {s:'WPP.L',n:'WPP'},
+    {s:'WTB.L',n:'Whitbread'},
+    {s:'III.L',n:'3i Group'},
+    {s:'ADM.L',n:'Admiral'},
+    {s:'ANTO.L',n:'Antofagasta'},
+    {s:'AV.L',n:'Aviva'},
+    {s:'BRBY.L',n:'Burberry'},
+    {s:'CCL.L',n:'Carnival'},
+    {s:'ENT.L',n:'Entain'},
+    {s:'HLMA.L',n:'Halma'},
+    {s:'ITRK.L',n:'Intertek'},
+    {s:'JMAT.L',n:'Johnson Matthey'},
+    {s:'NXT.L',n:'Next'},
+    {s:'PHNX.L',n:'Phoenix Group'},
+    {s:'RTO.L',n:'Rentokil'},
+    {s:'AUTO.L',n:'Auto Trader'},
+    {s:'SMT.L',n:'Scottish Mortgage'},
+    {s:'WEIR.L',n:'Weir Group'},
+    {s:'MNG.L',n:'M&G'},
+    {s:'RS1.L',n:'RS Group'},
+    {s:'BKG.L',n:'Berkeley Group'},
+    {s:'BWY.L',n:'Bellway'},
+    {s:'HSX.L',n:'Hiscox'},
+    {s:'DCC.L',n:'DCC'},
+    {s:'SPX.L',n:'Spirax-Sarco'},
+    {s:'SMDS.L',n:'DS Smith'},
+    {s:'ETL.L',n:'Electrocomponents'},
+    {s:'TRN.L',n:'Trainline'},
+    {s:'HWDN.L',n:'Howden Joinery'},
+    {s:'BDEV.L',n:'Barratt Dev'},
+    {s:'BME.L',n:'B&M European'},
+    {s:'CTEC.L',n:'ConvaTec'},
+    {s:'HIK.L',n:'Hikma Pharma'},
+    {s:'DPLM.L',n:'Diploma'},
+    {s:'FLTR.L',n:'Flutter Entertainment'},
+    {s:'UTG.L',n:'Unite Group'},
+    {s:'VTY.L',n:'Vistry Group'},
+    {s:'OSB.L',n:'OSB Group'},
+    {s:'SMWH.L',n:'WH Smith'},
+    {s:'PFC.L',n:'Petrofac'},
+    {s:'HFD.L',n:'Halfords'},
+    {s:'MGGT.L',n:'Meggitt'},
+    {s:'AV.L',n:'Aviva 2'},
+    {s:'IMI.L',n:'IMI plc'},
+    {s:'HLMA.L',n:'Halma 2'},
+    {s:'RWI.L',n:'Renewi'},
+    {s:'JET.L',n:'Just Eat'},
+    {s:'FRAS.L',n:'Frasers Group'},
+    {s:'STJ.L',n:'St. James\'s Place'},
+    {s:'DLG.L',n:'Direct Line'},
+    {s:'MONY.L',n:'Moneysupermarket'},
+    {s:'TUI.L',n:'TUI AG'},
+    {s:'WIZZ.L',n:'Wizz Air'}
+  ],
+  NASDAQ100: [
+    {s:'AAPL',n:'Apple'},
+    {s:'MSFT',n:'Microsoft'},
+    {s:'NVDA',n:'NVIDIA'},
+    {s:'AMZN',n:'Amazon'},
+    {s:'META',n:'Meta'},
+    {s:'GOOGL',n:'Alphabet A'},
+    {s:'GOOG',n:'Alphabet C'},
+    {s:'TSLA',n:'Tesla'},
+    {s:'AVGO',n:'Broadcom'},
+    {s:'COST',n:'Costco'},
+    {s:'NFLX',n:'Netflix'},
+    {s:'ASML',n:'ASML ADR'},
+    {s:'AMD',n:'AMD'},
+    {s:'AZN',n:'AstraZeneca ADR'},
+    {s:'QCOM',n:'Qualcomm'},
+    {s:'INTU',n:'Intuit'},
+    {s:'AMAT',n:'Applied Materials'},
+    {s:'ISRG',n:'Intuitive Surgical'},
+    {s:'TXN',n:'Texas Instruments'},
+    {s:'AMGN',n:'Amgen'},
+    {s:'BKNG',n:'Booking Holdings'},
+    {s:'MU',n:'Micron'},
+    {s:'CMCSA',n:'Comcast'},
+    {s:'HON',n:'Honeywell'},
+    {s:'LRCX',n:'Lam Research'},
+    {s:'PANW',n:'Palo Alto Networks'},
+    {s:'ADI',n:'Analog Devices'},
+    {s:'MELI',n:'MercadoLibre'},
+    {s:'KLAC',n:'KLA Corp'},
+    {s:'SNPS',n:'Synopsys'},
+    {s:'CDNS',n:'Cadence Design'},
+    {s:'REGN',n:'Regeneron'},
+    {s:'MDLZ',n:'Mondelez'},
+    {s:'CRWD',n:'CrowdStrike'},
+    {s:'CTAS',n:'Cintas'},
+    {s:'ABNB',n:'Airbnb'},
+    {s:'MRVL',n:'Marvell Tech'},
+    {s:'CSX',n:'CSX'},
+    {s:'ORLY',n:'O\'Reilly Auto'},
+    {s:'PCAR',n:'PACCAR'},
+    {s:'ADSK',n:'Autodesk'},
+    {s:'CPRT',n:'Copart'},
+    {s:'FTNT',n:'Fortinet'},
+    {s:'ROST',n:'Ross Stores'},
+    {s:'DXCM',n:'DexCom'},
+    {s:'AEP',n:'American Electric'},
+    {s:'FANG',n:'Diamondback Energy'},
+    {s:'PAYX',n:'Paychex'},
+    {s:'ODFL',n:'Old Dominion'},
+    {s:'MRNA',n:'Moderna'},
+    {s:'IDXX',n:'IDEXX Labs'},
+    {s:'MCHP',n:'Microchip Tech'},
+    {s:'EA',n:'Electronic Arts'},
+    {s:'WBD',n:'Warner Bros'},
+    {s:'BIIB',n:'Biogen'},
+    {s:'ILMN',n:'Illumina'},
+    {s:'XEL',n:'Xcel Energy'},
+    {s:'ON',n:'ON Semiconductor'},
+    {s:'DLTR',n:'Dollar Tree'},
+    {s:'ZS',n:'Zscaler'},
+    {s:'FAST',n:'Fastenal'},
+    {s:'TEAM',n:'Atlassian'},
+    {s:'GEHC',n:'GE Healthcare'},
+    {s:'TTD',n:'Trade Desk'},
+    {s:'ANSS',n:'ANSYS'},
+    {s:'DDOG',n:'Datadog'},
+    {s:'VRSK',n:'Verisk Analytics'},
+    {s:'SBUX',n:'Starbucks'},
+    {s:'GILD',n:'Gilead Sciences'},
+    {s:'LULU',n:'Lululemon'},
+    {s:'CEG',n:'Constellation Energy'},
+    {s:'CHTR',n:'Charter Comm'},
+    {s:'NXPI',n:'NXP Semi'},
+    {s:'EBAY',n:'eBay'},
+    {s:'PYPL',n:'PayPal'},
+    {s:'PDD',n:'PDD Holdings'},
+    {s:'MNST',n:'Monster Beverage'},
+    {s:'VRTX',n:'Vertex Pharma'},
+    {s:'CSGP',n:'CoStar'},
+    {s:'WDAY',n:'Workday'},
+    {s:'KDP',n:'Keurig Dr Pepper'},
+    {s:'CCEP',n:'Coca-Cola Europacific'},
+    {s:'TTWO',n:'Take-Two'},
+    {s:'ENPH',n:'Enphase Energy'},
+    {s:'ZM',n:'Zoom'},
+    {s:'OKTA',n:'Okta'},
+    {s:'COIN',n:'Coinbase'},
+    {s:'PLTR',n:'Palantir'},
+    {s:'SNOW',n:'Snowflake'},
+    {s:'NET',n:'Cloudflare'},
+    {s:'SHOP',n:'Shopify'},
+    {s:'UBER',n:'Uber'},
+    {s:'RBLX',n:'Roblox'},
+    {s:'HOOD',n:'Robinhood'},
+    {s:'AFRM',n:'Affirm'},
+    {s:'RIVN',n:'Rivian'},
+    {s:'LCID',n:'Lucid Group'},
+    {s:'JD',n:'JD.com'},
+    {s:'MPWR',n:'Monolithic Power'},
+    {s:'SMCI',n:'Super Micro'},
+    {s:'ARM',n:'ARM Holdings'},
+    {s:'MDB',n:'MongoDB'},
+    {s:'APP',n:'Applovin'},
+    {s:'INTC',n:'Intel'},
+    {s:'TEMU',n:'PDD Holdings B'}
+  ],
+  SP500: [
+    {s:'MMM',n:'3M'},
+    {s:'AOS',n:'A.O. Smith'},
+    {s:'ABT',n:'Abbott'},
+    {s:'ABBV',n:'AbbVie'},
+    {s:'ACN',n:'Accenture'},
+    {s:'ADBE',n:'Adobe'},
+    {s:'AMD',n:'AMD'},
+    {s:'AES',n:'AES Corp'},
+    {s:'AFL',n:'Aflac'},
+    {s:'A',n:'Agilent'},
+    {s:'APD',n:'Air Products'},
+    {s:'AKAM',n:'Akamai'},
+    {s:'ALK',n:'Alaska Air'},
+    {s:'ALB',n:'Albemarle'},
+    {s:'ARE',n:'Alexandria RE'},
+    {s:'ALGN',n:'Align Technology'},
+    {s:'ALLE',n:'Allegion'},
+    {s:'LNT',n:'Alliant Energy'},
+    {s:'ALL',n:'Allstate'},
+    {s:'GOOGL',n:'Alphabet A'},
+    {s:'GOOG',n:'Alphabet C'},
+    {s:'MO',n:'Altria'},
+    {s:'AMZN',n:'Amazon'},
+    {s:'AMCR',n:'Amcor'},
+    {s:'AEE',n:'Ameren'},
+    {s:'AAL',n:'American Airlines'},
+    {s:'AEP',n:'American Electric'},
+    {s:'AXP',n:'American Express'},
+    {s:'AIG',n:'American Intl Group'},
+    {s:'AMT',n:'American Tower'},
+    {s:'AWK',n:'American Water'},
+    {s:'AMP',n:'Ameriprise'},
+    {s:'ABC',n:'AmerisourceBergen'},
+    {s:'AME',n:'AMETEK'},
+    {s:'AMGN',n:'Amgen'},
+    {s:'APH',n:'Amphenol'},
+    {s:'ADI',n:'Analog Devices'},
+    {s:'ANSS',n:'ANSYS'},
+    {s:'AON',n:'Aon'},
+    {s:'APA',n:'APA Corp'},
+    {s:'AAPL',n:'Apple'},
+    {s:'AMAT',n:'Applied Materials'},
+    {s:'APTV',n:'Aptiv'},
+    {s:'ACGL',n:'Arch Capital'},
+    {s:'ADM',n:'Archer-Daniels'},
+    {s:'ANET',n:'Arista Networks'},
+    {s:'AJG',n:'Arthur J Gallagher'},
+    {s:'AIZ',n:'Assurant'},
+    {s:'T',n:'AT&T'},
+    {s:'ATO',n:'Atmos Energy'},
+    {s:'ADSK',n:'Autodesk'},
+    {s:'ADP',n:'Automatic Data'},
+    {s:'AZO',n:'AutoZone'},
+    {s:'AVB',n:'AvalonBay'},
+    {s:'AVY',n:'Avery Dennison'},
+    {s:'AXON',n:'Axon Enterprise'},
+    {s:'BKR',n:'Baker Hughes'},
+    {s:'BALL',n:'Ball Corp'},
+    {s:'BAC',n:'Bank of America'},
+    {s:'BK',n:'Bank of New York'},
+    {s:'BBWI',n:'Bath & Body'},
+    {s:'BAX',n:'Baxter'},
+    {s:'BDX',n:'Becton Dickinson'},
+    {s:'BRK-B',n:'Berkshire Hathaway'},
+    {s:'BBY',n:'Best Buy'},
+    {s:'BIO',n:'Bio-Rad'},
+    {s:'TECH',n:'Bio-Techne'},
+    {s:'BIIB',n:'Biogen'},
+    {s:'BLK',n:'BlackRock'},
+    {s:'BX',n:'Blackstone'},
+    {s:'BA',n:'Boeing'},
+    {s:'BKNG',n:'Booking Holdings'},
+    {s:'BWA',n:'BorgWarner'},
+    {s:'BSX',n:'Boston Scientific'},
+    {s:'BMY',n:'Bristol-Myers'},
+    {s:'AVGO',n:'Broadcom'},
+    {s:'BR',n:'Broadridge'},
+    {s:'BRO',n:'Brown & Brown'},
+    {s:'BLDR',n:'Builders FirstSource'},
+    {s:'BG',n:'Bunge'},
+    {s:'CDNS',n:'Cadence Design'},
+    {s:'CZR',n:'Caesars'},
+    {s:'CPT',n:'Camden Property'},
+    {s:'CPB',n:'Campbell Soup'},
+    {s:'COF',n:'Capital One'},
+    {s:'CAH',n:'Cardinal Health'},
+    {s:'KMX',n:'CarMax'},
+    {s:'CCL',n:'Carnival'},
+    {s:'CARR',n:'Carrier Global'},
+    {s:'CAT',n:'Caterpillar'},
+    {s:'CBOE',n:'Cboe Global'},
+    {s:'CBRE',n:'CBRE Group'},
+    {s:'CDW',n:'CDW Corp'},
+    {s:'CE',n:'Celanese'},
+    {s:'COR',n:'Cencora'},
+    {s:'CNC',n:'Centene'},
+    {s:'CNP',n:'CenterPoint'},
+    {s:'CF',n:'CF Industries'},
+    {s:'CRL',n:'Charles River'},
+    {s:'SCHW',n:'Charles Schwab'},
+    {s:'CHTR',n:'Charter Comm'},
+    {s:'CVX',n:'Chevron'},
+    {s:'CMG',n:'Chipotle'},
+    {s:'CB',n:'Chubb'},
+    {s:'CHD',n:'Church & Dwight'},
+    {s:'CI',n:'Cigna'},
+    {s:'CINF',n:'Cincinnati Financial'},
+    {s:'CTAS',n:'Cintas'},
+    {s:'CSCO',n:'Cisco'},
+    {s:'C',n:'Citigroup'},
+    {s:'CFG',n:'Citizens Financial'},
+    {s:'CLX',n:'Clorox'},
+    {s:'CME',n:'CME Group'},
+    {s:'CMS',n:'CMS Energy'},
+    {s:'KO',n:'Coca-Cola'},
+    {s:'CTSH',n:'Cognizant'},
+    {s:'CL',n:'Colgate'},
+    {s:'CMCSA',n:'Comcast'},
+    {s:'CMA',n:'Comerica'},
+    {s:'CAG',n:'Conagra'},
+    {s:'COP',n:'ConocoPhillips'},
+    {s:'ED',n:'Consolidated Edison'},
+    {s:'STZ',n:'Constellation Brands'},
+    {s:'CEG',n:'Constellation Energy'},
+    {s:'COO',n:'Cooper Companies'},
+    {s:'CPRT',n:'Copart'},
+    {s:'GLW',n:'Corning'},
+    {s:'CTVA',n:'Corteva'},
+    {s:'CSGP',n:'CoStar'},
+    {s:'COST',n:'Costco'},
+    {s:'CTRA',n:'Coterra Energy'},
+    {s:'CCI',n:'Crown Castle'},
+    {s:'CSX',n:'CSX'},
+    {s:'CMI',n:'Cummins'},
+    {s:'CVS',n:'CVS Health'},
+    {s:'DHR',n:'Danaher'},
+    {s:'DRI',n:'Darden Restaurants'},
+    {s:'DVA',n:'DaVita'},
+    {s:'DE',n:'Deere & Co'},
+    {s:'DAL',n:'Delta Air Lines'},
+    {s:'DVN',n:'Devon Energy'},
+    {s:'DXCM',n:'DexCom'},
+    {s:'FANG',n:'Diamondback Energy'},
+    {s:'DLR',n:'Digital Realty'},
+    {s:'DFS',n:'Discover Financial'},
+    {s:'DIS',n:'Disney'},
+    {s:'DG',n:'Dollar General'},
+    {s:'DLTR',n:'Dollar Tree'},
+    {s:'D',n:'Dominion Energy'},
+    {s:'DPZ',n:'Domino\'s Pizza'},
+    {s:'DOV',n:'Dover'},
+    {s:'DOW',n:'Dow Inc'},
+    {s:'DHI',n:'DR Horton'},
+    {s:'DTE',n:'DTE Energy'},
+    {s:'DUK',n:'Duke Energy'},
+    {s:'DD',n:'DuPont'},
+    {s:'EMN',n:'Eastman Chemical'},
+    {s:'ETN',n:'Eaton'},
+    {s:'EBAY',n:'eBay'},
+    {s:'ECL',n:'Ecolab'},
+    {s:'EIX',n:'Edison Intl'},
+    {s:'EW',n:'Edwards Lifesciences'},
+    {s:'EA',n:'Electronic Arts'},
+    {s:'ELV',n:'Elevance Health'},
+    {s:'LLY',n:'Eli Lilly'},
+    {s:'EMR',n:'Emerson Electric'},
+    {s:'ENPH',n:'Enphase'},
+    {s:'ETR',n:'Entergy'},
+    {s:'EOG',n:'EOG Resources'},
+    {s:'EPAM',n:'EPAM Systems'},
+    {s:'EQT',n:'EQT Corp'},
+    {s:'EFX',n:'Equifax'},
+    {s:'EQIX',n:'Equinix'},
+    {s:'EQR',n:'Equity Residential'},
+    {s:'ESS',n:'Essex Property'},
+    {s:'EL',n:'Estee Lauder'},
+    {s:'ETSY',n:'Etsy'},
+    {s:'EG',n:'Everest Group'},
+    {s:'EVRG',n:'Evergy'},
+    {s:'ES',n:'Eversource'},
+    {s:'EXC',n:'Exelon'},
+    {s:'EXPE',n:'Expedia'},
+    {s:'EXPD',n:'Expeditors'},
+    {s:'EXR',n:'Extra Space'},
+    {s:'XOM',n:'Exxon Mobil'},
+    {s:'FFIV',n:'F5 Networks'},
+    {s:'FDS',n:'FactSet'},
+    {s:'FICO',n:'FICO'},
+    {s:'FAST',n:'Fastenal'},
+    {s:'FRT',n:'Federal Realty'},
+    {s:'FDX',n:'FedEx'},
+    {s:'FIS',n:'FIS'},
+    {s:'FITB',n:'Fifth Third'},
+    {s:'FSLR',n:'First Solar'},
+    {s:'FE',n:'FirstEnergy'},
+    {s:'FI',n:'Fiserv'},
+    {s:'FMC',n:'FMC Corp'},
+    {s:'F',n:'Ford'},
+    {s:'FTNT',n:'Fortinet'},
+    {s:'FTV',n:'Fortive'},
+    {s:'FOXA',n:'Fox Corp A'},
+    {s:'BEN',n:'Franklin Resources'},
+    {s:'FCX',n:'Freeport-McMoRan'},
+    {s:'GRMN',n:'Garmin'},
+    {s:'IT',n:'Gartner'},
+    {s:'GE',n:'GE Aerospace'},
+    {s:'GEHC',n:'GE Healthcare'},
+    {s:'GEN',n:'Gen Digital'},
+    {s:'GNRC',n:'Generac'},
+    {s:'GD',n:'General Dynamics'},
+    {s:'GIS',n:'General Mills'},
+    {s:'GM',n:'General Motors'},
+    {s:'GPC',n:'Genuine Parts'},
+    {s:'GILD',n:'Gilead Sciences'},
+    {s:'GPN',n:'Global Payments'},
+    {s:'GL',n:'Globe Life'},
+    {s:'GS',n:'Goldman Sachs'},
+    {s:'HAL',n:'Halliburton'},
+    {s:'HIG',n:'Hartford Financial'},
+    {s:'HAS',n:'Hasbro'},
+    {s:'HCA',n:'HCA Healthcare'},
+    {s:'DOC',n:'Healthpeak'},
+    {s:'HSIC',n:'Henry Schein'},
+    {s:'HSY',n:'Hershey'},
+    {s:'HES',n:'Hess'},
+    {s:'HPE',n:'HP Enterprise'},
+    {s:'HPQ',n:'HP Inc'},
+    {s:'HOLX',n:'Hologic'},
+    {s:'HD',n:'Home Depot'},
+    {s:'HON',n:'Honeywell'},
+    {s:'HRL',n:'Hormel'},
+    {s:'HST',n:'Host Hotels'},
+    {s:'HWM',n:'Howmet Aerospace'},
+    {s:'HUM',n:'Humana'},
+    {s:'HBAN',n:'Huntington'},
+    {s:'HII',n:'Huntington Ingalls'},
+    {s:'IBM',n:'IBM'},
+    {s:'IEX',n:'IDEX Corp'},
+    {s:'IDXX',n:'IDEXX Labs'},
+    {s:'ITW',n:'Illinois Tool'},
+    {s:'INCY',n:'Incyte'},
+    {s:'IR',n:'Ingersoll Rand'},
+    {s:'PODD',n:'Insulet'},
+    {s:'INTC',n:'Intel'},
+    {s:'ICE',n:'Intercontinental Exch'},
+    {s:'IVZ',n:'Invesco'},
+    {s:'INVH',n:'Invitation Homes'},
+    {s:'IQV',n:'IQVIA'},
+    {s:'IRM',n:'Iron Mountain'},
+    {s:'JBHT',n:'JB Hunt'},
+    {s:'JBL',n:'Jabil'},
+    {s:'JKHY',n:'Jack Henry'},
+    {s:'J',n:'Jacobs Solutions'},
+    {s:'JNJ',n:'Johnson & Johnson'},
+    {s:'JCI',n:'Johnson Controls'},
+    {s:'JPM',n:'JPMorgan'},
+    {s:'JNPR',n:'Juniper Networks'},
+    {s:'K',n:'Kellanova'},
+    {s:'KVUE',n:'Kenvue'},
+    {s:'KEY',n:'KeyCorp'},
+    {s:'KEYS',n:'Keysight'},
+    {s:'KMB',n:'Kimberly-Clark'},
+    {s:'KIM',n:'Kimco Realty'},
+    {s:'KMI',n:'Kinder Morgan'},
+    {s:'KLAC',n:'KLA Corp'},
+    {s:'KHC',n:'Kraft Heinz'},
+    {s:'KR',n:'Kroger'},
+    {s:'LHX',n:'L3Harris'},
+    {s:'LH',n:'Laboratory Corp'},
+    {s:'LRCX',n:'Lam Research'},
+    {s:'LW',n:'Lamb Weston'},
+    {s:'LVS',n:'Las Vegas Sands'},
+    {s:'LDOS',n:'Leidos'},
+    {s:'LEN',n:'Lennar'},
+    {s:'LIN',n:'Linde'},
+    {s:'LOW',n:'Lowe\'s'},
+    {s:'LULU',n:'Lululemon'},
+    {s:'LYB',n:'LyondellBasell'},
+    {s:'MTB',n:'M&T Bank'},
+    {s:'MRO',n:'Marathon Oil'},
+    {s:'MPC',n:'Marathon Petroleum'},
+    {s:'MKTX',n:'MarketAxess'},
+    {s:'MAR',n:'Marriott'},
+    {s:'MMC',n:'Marsh McLennan'},
+    {s:'MLM',n:'Martin Marietta'},
+    {s:'MAS',n:'Masco'},
+    {s:'MA',n:'Mastercard'},
+    {s:'MTCH',n:'Match Group'},
+    {s:'MKC',n:'McCormick'},
+    {s:'MCD',n:'McDonald\'s'},
+    {s:'MCK',n:'McKesson'},
+    {s:'MDT',n:'Medtronic'},
+    {s:'MRK',n:'Merck'},
+    {s:'META',n:'Meta'},
+    {s:'MET',n:'MetLife'},
+    {s:'MTD',n:'Mettler-Toledo'},
+    {s:'MGM',n:'MGM Resorts'},
+    {s:'MCHP',n:'Microchip Tech'},
+    {s:'MU',n:'Micron'},
+    {s:'MSFT',n:'Microsoft'},
+    {s:'MAA',n:'Mid-America Apt'},
+    {s:'MRNA',n:'Moderna'},
+    {s:'MHK',n:'Mohawk Industries'},
+    {s:'MOH',n:'Molina Healthcare'},
+    {s:'TAP',n:'Molson Coors'},
+    {s:'MDLZ',n:'Mondelez'},
+    {s:'MPWR',n:'Monolithic Power'},
+    {s:'MNST',n:'Monster Beverage'},
+    {s:'MCO',n:'Moody\'s'},
+    {s:'MS',n:'Morgan Stanley'},
+    {s:'MOS',n:'Mosaic'},
+    {s:'MSI',n:'Motorola Solutions'},
+    {s:'MSCI',n:'MSCI Inc'},
+    {s:'NDAQ',n:'Nasdaq Inc'},
+    {s:'NTAP',n:'NetApp'},
+    {s:'NFLX',n:'Netflix'},
+    {s:'NEM',n:'Newmont'},
+    {s:'NEE',n:'NextEra Energy'},
+    {s:'NKE',n:'Nike'},
+    {s:'NI',n:'NiSource'},
+    {s:'NSC',n:'Norfolk Southern'},
+    {s:'NTRS',n:'Northern Trust'},
+    {s:'NOC',n:'Northrop Grumman'},
+    {s:'NCLH',n:'Norwegian Cruise'},
+    {s:'NRG',n:'NRG Energy'},
+    {s:'NUE',n:'Nucor'},
+    {s:'NVDA',n:'NVIDIA'},
+    {s:'NVR',n:'NVR Inc'},
+    {s:'NXPI',n:'NXP Semi'},
+    {s:'O',n:'Realty Income'},
+    {s:'OXY',n:'Occidental'},
+    {s:'ODFL',n:'Old Dominion'},
+    {s:'OMC',n:'Omnicom'},
+    {s:'ON',n:'ON Semiconductor'},
+    {s:'OKE',n:'ONEOK'},
+    {s:'ORCL',n:'Oracle'},
+    {s:'ORLY',n:'O\'Reilly Auto'},
+    {s:'OTIS',n:'Otis Worldwide'},
+    {s:'OGN',n:'Organon'},
+    {s:'PCAR',n:'PACCAR'},
+    {s:'PKG',n:'Packaging Corp'},
+    {s:'PANW',n:'Palo Alto Networks'},
+    {s:'PH',n:'Parker Hannifin'},
+    {s:'PAYX',n:'Paychex'},
+    {s:'PAYC',n:'Paycom'},
+    {s:'PYPL',n:'PayPal'},
+    {s:'PNR',n:'Pentair'},
+    {s:'PEP',n:'PepsiCo'},
+    {s:'PFE',n:'Pfizer'},
+    {s:'PCG',n:'PG&E'},
+    {s:'PM',n:'Philip Morris'},
+    {s:'PSX',n:'Phillips 66'},
+    {s:'PNW',n:'Pinnacle West'},
+    {s:'PNC',n:'PNC Financial'},
+    {s:'POOL',n:'Pool Corp'},
+    {s:'PPG',n:'PPG Industries'},
+    {s:'PPL',n:'PPL Corp'},
+    {s:'PFG',n:'Principal Financial'},
+    {s:'PG',n:'Procter & Gamble'},
+    {s:'PGR',n:'Progressive'},
+    {s:'PLD',n:'Prologis'},
+    {s:'PRU',n:'Prudential Financial'},
+    {s:'PEG',n:'Public Service Enterp'},
+    {s:'PSA',n:'Public Storage'},
+    {s:'PHM',n:'PulteGroup'},
+    {s:'QRVO',n:'Qorvo'},
+    {s:'QCOM',n:'Qualcomm'},
+    {s:'PWR',n:'Quanta Services'},
+    {s:'DGX',n:'Quest Diagnostics'},
+    {s:'RL',n:'Ralph Lauren'},
+    {s:'RJF',n:'Raymond James'},
+    {s:'RTX',n:'RTX Corp'},
+    {s:'REG',n:'Regency Centers'},
+    {s:'REGN',n:'Regeneron'},
+    {s:'RF',n:'Regions Financial'},
+    {s:'RSG',n:'Republic Services'},
+    {s:'RMD',n:'ResMed'},
+    {s:'RHI',n:'Robert Half'},
+    {s:'ROK',n:'Rockwell Automation'},
+    {s:'ROL',n:'Rollins'},
+    {s:'ROP',n:'Roper Tech'},
+    {s:'ROST',n:'Ross Stores'},
+    {s:'RCL',n:'Royal Caribbean'},
+    {s:'SPGI',n:'S&P Global'},
+    {s:'CRM',n:'Salesforce'},
+    {s:'SBAC',n:'SBA Comm'},
+    {s:'SLB',n:'Schlumberger'},
+    {s:'STX',n:'Seagate'},
+    {s:'SEE',n:'Sealed Air'},
+    {s:'SRE',n:'Sempra'},
+    {s:'NOW',n:'ServiceNow'},
+    {s:'SHW',n:'Sherwin-Williams'},
+    {s:'SPG',n:'Simon Property'},
+    {s:'SWKS',n:'Skyworks'},
+    {s:'SNA',n:'Snap-on'},
+    {s:'SO',n:'Southern Co'},
+    {s:'LUV',n:'Southwest Airlines'},
+    {s:'SWK',n:'Stanley Black'},
+    {s:'SBUX',n:'Starbucks'},
+    {s:'STT',n:'State Street'},
+    {s:'STLD',n:'Steel Dynamics'},
+    {s:'STE',n:'STERIS'},
+    {s:'SYK',n:'Stryker'},
+    {s:'SYF',n:'Synchrony Financial'},
+    {s:'SNPS',n:'Synopsys'},
+    {s:'SYY',n:'Sysco'},
+    {s:'TMUS',n:'T-Mobile'},
+    {s:'TDY',n:'Teledyne'},
+    {s:'TFX',n:'Teleflex'},
+    {s:'TER',n:'Teradyne'},
+    {s:'TSLA',n:'Tesla'},
+    {s:'TXN',n:'Texas Instruments'},
+    {s:'TMO',n:'Thermo Fisher'},
+    {s:'TJX',n:'TJX Companies'},
+    {s:'TSCO',n:'Tractor Supply'},
+    {s:'TT',n:'Trane Tech'},
+    {s:'TDG',n:'TransDigm'},
+    {s:'TRV',n:'Travelers'},
+    {s:'TRMB',n:'Trimble'},
+    {s:'TFC',n:'Truist Financial'},
+    {s:'TYL',n:'Tyler Technologies'},
+    {s:'TSN',n:'Tyson Foods'},
+    {s:'USB',n:'US Bancorp'},
+    {s:'UBER',n:'Uber'},
+    {s:'UDR',n:'UDR Inc'},
+    {s:'ULTA',n:'Ulta Beauty'},
+    {s:'UNH',n:'UnitedHealth'},
+    {s:'UPS',n:'UPS'},
+    {s:'URI',n:'United Rentals'},
+    {s:'UNP',n:'Union Pacific'},
+    {s:'UAL',n:'United Airlines'},
+    {s:'UHS',n:'Universal Health'},
+    {s:'VLO',n:'Valero Energy'},
+    {s:'VTR',n:'Ventas'},
+    {s:'VRSN',n:'VeriSign'},
+    {s:'VRSK',n:'Verisk Analytics'},
+    {s:'VZ',n:'Verizon'},
+    {s:'VRTX',n:'Vertex Pharma'},
+    {s:'VLTO',n:'Veralto'},
+    {s:'V',n:'Visa'},
+    {s:'VST',n:'Vistra'},
+    {s:'WAB',n:'Wabtec'},
+    {s:'WBA',n:'Walgreens'},
+    {s:'WMT',n:'Walmart'},
+    {s:'WBD',n:'Warner Bros'},
+    {s:'WM',n:'Waste Management'},
+    {s:'WAT',n:'Waters Corp'},
+    {s:'WEC',n:'WEC Energy'},
+    {s:'WFC',n:'Wells Fargo'},
+    {s:'WELL',n:'Welltower'},
+    {s:'WST',n:'West Pharma'},
+    {s:'WDC',n:'Western Digital'},
+    {s:'WY',n:'Weyerhaeuser'},
+    {s:'WHR',n:'Whirlpool'},
+    {s:'WMB',n:'Williams Cos'},
+    {s:'WTW',n:'Willis Towers'},
+    {s:'GWW',n:'W.W. Grainger'},
+    {s:'WYNN',n:'Wynn Resorts'},
+    {s:'XEL',n:'Xcel Energy'},
+    {s:'XYL',n:'Xylem'},
+    {s:'YUM',n:'Yum Brands'},
+    {s:'ZBRA',n:'Zebra Tech'},
+    {s:'ZBH',n:'Zimmer Biomet'},
+    {s:'ZTS',n:'Zoetis'}
+  ]
+};
 
-async function saveToFirestore(symbol, candles, metrics) {
-  if (!currentUser) return;
-  try {
-    const ref  = doc(db, 'users', currentUser.uid, 'stocks', symbol);
-    const info = ALL_STOCKS[symbol] ?? { name: symbol, indices: [] };
-    await setDoc(ref, {
-      name:        info.name,
-      indices:     info.indices,
-      lastUpdated: Date.now(),
-      metrics,
-      candles:     candles.map(c => [c.time, c.open, c.high, c.low, c.close, c.volume])
-    });
-    saveCheckpoint(symbol, Date.now());
-  } catch(e) {
-    console.warn('Firestore save failed:', symbol, e.code, e.message);
-    if (e.code === 'permission-denied') {
-      showToast('Firestore: Keine Berechtigung!', 6000);
-    }
-  }
+// Build flat index map
+const ALL_STOCKS = {};
+Object.entries(STOCKS).forEach(([idx, list]) => {
+  list.forEach(({s,n}) => {
+    if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [] };
+    if (!ALL_STOCKS[s].indices.includes(idx)) ALL_STOCKS[s].indices.push(idx);
+  });
+});
+
+// ── State ────────────────────────────────────────────────────────────────────
+let stockData    = {};
+let filteredSyms = [];
+let activeFilter = 'all';
+let activeIndex  = 'ALL';
+let activeCharts = {};
+let modalChartInst = null;
+let currentUser  = null;
+let isLoading    = false;
+
+const PROXIES = [
+  'https://corsproxy.io/?',
+  'https://api.allorigins.win/raw?url=',
+  'https://corsproxy.org/?',
+];
+let proxyIndex = 0;
+function getProxy() { return PROXIES[proxyIndex % PROXIES.length]; }
+
+// ── Helpers ──────────────────────────────────────────────────────────────────
+const fmt  = (n,d=2) => n != null ? (+n).toFixed(d) : '-';
+const fmtK = n => {
+  if (n == null) return '-';
+  if (n > 1e9) return (n/1e9).toFixed(1)+'B';
+  if (n > 1e6) return (n/1e6).toFixed(1)+'M';
+  return (+n).toLocaleString('de-DE');
+};
+const calcMA = (cl,p) => cl.length<p ? null : cl.slice(-p).reduce((a,b)=>a+b,0)/p;
+function calcRSI(cl,p=14) {
+  if (cl.length<p+1) return null;
+  let g=0,l=0;
+  for(let i=cl.length-p;i<cl.length;i++){const d=cl[i]-cl[i-1];d>0?g+=d:l+=Math.abs(d);}
+  if(l===0) return 100;
+  return 100-(100/(1+(g/p)/(l/p)));
 }
-
-async function loadFromFirestore() {
-  if (!currentUser) return;
-  setStatus('loading', 'Lade aus Cloud...');
-  document.getElementById('loadBtn').disabled = false;
-
-  try {
-    const colRef = collection(db, 'users', currentUser.uid, 'stocks');
-    const snap   = await getDocs(colRef);
-
-    snap.forEach(d => {
-      const raw = d.data();
-      if (!raw.candles?.length || !raw.metrics) return;
-      stockData[d.id] = {
-        name:        raw.name,
-        indices:     raw.indices || [],
-        candles:     raw.candles.map(r => ({ time:r[0], open:r[1], high:r[2], low:r[3], close:r[4], volume:r[5] })),
-        metrics:     raw.metrics,
-        lastUpdated: raw.lastUpdated,
-      };
-      saveCheckpoint(d.id, raw.lastUpdated);
-    });
-
-    const n = Object.keys(stockData).length;
-    showToast(`${n} Aktien aus Cloud geladen`, 3000);
-
-    if (n > 0) {
-      setStatus('live', `${n} Aktien`);
-      document.getElementById('loadBtn').textContent  = 'Aktualisieren';
-      document.getElementById('filterSection').classList.add('visible');
-      applyCurrentFilter();
-      // Auto-load missing
-      if (n < Object.keys(ALL_STOCKS).length * 0.85) {
-        setTimeout(() => window.loadAllData(), 2000);
-      }
-    } else {
-      setStatus('', 'Bereit');
-      document.getElementById('loadBtn').textContent = 'Daten laden';
-      showToast('Noch keine Daten in Cloud', 3000);
-    }
-  } catch(e) {
-    console.error('Firestore load error:', e.code, e.message);
-    showToast('Cloud Fehler: ' + (e.code || e.message), 8000);
-    setStatus('', 'Bereit');
-    document.getElementById('loadBtn').textContent = 'Daten laden';
-  }
-}
-
-function showToast(msg, duration=3000) {
-  let t = document.getElementById('toast');
-  if (!t) {
-    t = document.createElement('div');
-    t.id = 'toast';
-    t.style.cssText = 'position:fixed;bottom:calc(24px + env(safe-area-inset-bottom));left:16px;right:16px;background:#1e293b;color:#e2e8f0;padding:12px 16px;border-radius:12px;font-size:13px;z-index:9999;border:1px solid #334155;text-align:center;transition:opacity .3s';
-    document.body.appendChild(t);
-  }
-  t.textContent = msg;
-  t.style.opacity = '1';
-  t.style.display = 'block';
-  clearTimeout(t._timer);
-  t._timer = setTimeout(() => { t.style.opacity='0'; setTimeout(()=>t.style.display='none',300); }, duration);
+function computeMetrics(candles) {
+  const cl=candles.map(c=>c.close),hi=candles.map(c=>c.high),lo=candles.map(c=>c.low);
+  const last=cl[cl.length-1],prev=cl[cl.length-2]??last,c30=cl[Math.max(0,cl.length-31)];
+  return {
+    close:last,open:candles[candles.length-1].open,
+    high:candles[candles.length-1].high,low:candles[candles.length-1].low,
+    volume:candles[candles.length-1].volume,
+    change1d:((last-prev)/prev)*100,change30d:((last-c30)/c30)*100,
+    ma20:calcMA(cl,20),ma50:calcMA(cl,50),ma200:calcMA(cl,200),
+    rsi:calcRSI(cl,14),high52w:Math.max(...hi),low52w:Math.min(...lo),
+  };
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
-let currentUser = null;
-
 onAuthStateChanged(auth, user => {
   currentUser = user;
   if (user) {
-    document.getElementById('loginScreen').style.display = 'none';
-    document.getElementById('appShell').style.display    = 'flex';
-    document.getElementById('userEmail').textContent     = user.email;
-    document.getElementById('loadBtn').disabled          = false;
+    document.getElementById('loginScreen').style.display='none';
+    document.getElementById('appShell').style.display='flex';
+    document.getElementById('userEmail').textContent=user.email;
     loadFromFirestore();
   } else {
-    document.getElementById('loginScreen').style.display = 'flex';
-    document.getElementById('appShell').style.display    = 'none';
-    stockData = {};
+    document.getElementById('loginScreen').style.display='flex';
+    document.getElementById('appShell').style.display='none';
   }
 });
 
 window.doLogin = async () => {
   try { await signInWithPopup(auth, new GoogleAuthProvider()); }
-  catch(e) { showToast('Login fehlgeschlagen: ' + e.message, 5000); }
+  catch(e) { alert('Login fehlgeschlagen: '+e.message); }
 };
 window.doLogout = () => signOut(auth);
 
+// ── Firestore ─────────────────────────────────────────────────────────────────
+async function saveToFirestore(symbol, candles, metrics) {
+  if (!currentUser) return;
+  await setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), {
+    name: ALL_STOCKS[symbol]?.name ?? symbol,
+    indices: ALL_STOCKS[symbol]?.indices ?? [],
+    lastUpdated: Date.now(),
+    metrics,
+    candles: candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume])
+  });
+}
+
+async function loadFromFirestore() {
+  if (!currentUser) return;
+  setStatus('loading','Lade gespeicherte Daten...');
+  try {
+    const snap = await getDocs(collection(db,'users',currentUser.uid,'stocks'));
+    snap.forEach(d => {
+      const raw = d.data();
+      stockData[d.id] = {
+        name: raw.name, indices: raw.indices||[],
+        candles: (raw.candles||[]).map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]})),
+        metrics: raw.metrics, lastUpdated: raw.lastUpdated
+      };
+    });
+    const n = Object.keys(stockData).length;
+    if (n>0) {
+      setStatus('live',`${n} Aktien (gespeichert)`);
+      document.getElementById('loadBtn').textContent='Aktualisieren';
+      document.getElementById('filterSection').classList.add('visible');
+      applyCurrentFilter();
+    } else {
+      setStatus('','Bereit - noch keine Daten');
+    }
+  } catch(e) { setStatus('','Firestore Fehler'); console.error(e); }
+}
+
 // ── Delta Loading ─────────────────────────────────────────────────────────────
 function needsUpdate(sym) {
-  // Check in-memory data first
   const d = stockData[sym];
-  if (d?.lastUpdated && d?.candles?.length > 10) {
-    const ageH = (Date.now() - d.lastUpdated) / 3600000;
-    return ageH > 6;
-  }
-  // Check localStorage checkpoint
-  try {
-    const progress = loadCheckpoint();
-    if (progress[sym]) {
-      const ageH = (Date.now() - progress[sym]) / 3600000;
-      return ageH > 6;
-    }
-  } catch(e) {}
-  return true; // No data at all - must load
+  if (!d?.lastUpdated) return true;
+  return (Date.now()-d.lastUpdated)/3600000 > 6;
 }
 function missingDays(sym) {
   const d = stockData[sym];
@@ -177,131 +904,78 @@ function mergeCandles(existing, fresh) {
   return [...existing,...fresh.filter(c=>c.time>lastT)].filter(c=>c.time>cutoff);
 }
 
-// ── Web Worker Load ───────────────────────────────────────────────────────────
-let activeWorker = null;
+async function fetchCandles(symbol, days=365) {
+  const end=Math.floor(Date.now()/1000), start=end-days*86400;
+  const url=`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&period1=${start}&period2=${end}`;
+  
+  // Try each proxy once
+  for (let attempt=0; attempt<PROXIES.length; attempt++) {
+    const proxy = PROXIES[(proxyIndex + attempt) % PROXIES.length];
+    try {
+      const res=await fetch(proxy+encodeURIComponent(url),{signal:AbortSignal.timeout(12000)});
+      if(!res.ok) continue;
+      const json=await res.json();
+      const result=json?.chart?.result?.[0];
+      if(!result) continue;
+      const ts=result.timestamp,q=result.indicators.quote[0];
+      const candles = ts.map((t,i)=>({time:t,open:q.open[i],high:q.high[i],low:q.low[i],close:q.close[i],volume:q.volume[i]}))
+               .filter(c=>c.open&&c.high&&c.low&&c.close);
+      if (candles.length > 0) return candles;
+    } catch(e) { /* try next proxy */ }
+  }
+  throw new Error('Alle Proxies fehlgeschlagen');
+}
 
-window.loadAllData = () => {
+// ── Main Load ─────────────────────────────────────────────────────────────────
+window.loadAllData = async () => {
   if (isLoading) return;
-  isLoading = true;
-  document.getElementById('loadBtn').disabled = true;
+  isLoading=true;
+  document.getElementById('loadBtn').disabled=true;
   document.getElementById('errorMsg').classList.remove('visible');
   showProgress(true);
+  // Rotate proxy on each load attempt to spread load
+  proxyIndex = (proxyIndex + 1) % PROXIES.length;
 
-  // Build symbol list
-  const idxFilter = activeIndex === 'ALL' ? Object.keys(STOCKS) : [activeIndex];
-  const seen = new Set();
-  const toLoad = [];
-  idxFilter.forEach(idx => {
-    STOCKS[idx].forEach(({s}) => {
-      if (!seen.has(s) && needsUpdate(s)) {
-        seen.add(s);
-        const info = ALL_STOCKS[s] ?? { name: s, indices: [] };
-        toLoad.push({ symbol: s, name: info.name, indices: info.indices });
-      }
-    });
-  });
+  const idxFilter = activeIndex==='ALL' ? Object.keys(STOCKS) : [activeIndex];
+  const toLoad=[];
+  idxFilter.forEach(idx=>STOCKS[idx].forEach(({s})=>{ if(!toLoad.includes(s)) toLoad.push(s); }));
 
-  if (toLoad.length === 0) {
-    // Everything is fresh – just re-render
-    showProgress(false);
-    isLoading = false;
-    document.getElementById('loadBtn').disabled = false;
-    applyCurrentFilter();
-    return;
+  const errors=[];
+  const BATCH=3;
+  for(let i=0;i<toLoad.length;i+=BATCH) {
+    const chunk=toLoad.slice(i,i+BATCH);
+    updateProgress(i,toLoad.length,`${i+1}-${Math.min(i+BATCH,toLoad.length)} von ${toLoad.length}`);
+    await Promise.all(chunk.map(async sym=>{
+      if(!needsUpdate(sym)) return;
+      try {
+        const days=Math.min(missingDays(sym)+5,365);
+        const fresh=await fetchCandles(sym,days);
+        const candles=mergeCandles(stockData[sym]?.candles,fresh);
+        const metrics=computeMetrics(candles);
+        const info=ALL_STOCKS[sym]??{name:sym,indices:[]};
+        stockData[sym]={candles,metrics,name:info.name,indices:info.indices,lastUpdated:Date.now()};
+        // Save to Firestore async - don't block or fail the UI
+        saveToFirestore(sym,candles,metrics).catch(e=>console.warn('Firestore save failed:',sym,e));
+      } catch(e){ errors.push(sym); }
+    }));
+    await new Promise(r=>setTimeout(r,350));
   }
 
-  // Terminate old worker if running
-  if (activeWorker) activeWorker.terminate();
-  activeWorker = new Worker('worker.js');
+  showProgress(false);
+  isLoading=false;
+  document.getElementById('loadBtn').disabled=false;
 
-  // Pass existing candle data so worker can do delta-loading
-  const existingData = {};
-  Object.entries(stockData).forEach(([sym, d]) => {
-    existingData[sym] = { candles: d.candles };
-  });
-
-  // Split into chunks of 100 to avoid iOS worker timeout
-  // Worker will process and we restart it for next chunk if needed
-  activeWorker.postMessage({ symbols: toLoad, existingData });
-  
-  // Watchdog: if worker stalls for 60s, restart it from checkpoint
-  let lastProgress = Date.now();
-  const watchdog = setInterval(() => {
-    if (Date.now() - lastProgress > 60000 && isLoading) {
-      console.warn('Worker stalled - restarting');
-      clearInterval(watchdog);
-      if (activeWorker) activeWorker.terminate();
-      activeWorker = null;
-      isLoading = false;
-      document.getElementById('loadBtn').disabled = false;
-      setTimeout(() => window.loadAllData(), 2000);
-    }
-  }, 10000);
-
-  const errors = [];
-
-  activeWorker.onmessage = async (e) => {
-    const msg = e.data;
-
-    if (msg.type === 'stock') {
-      lastProgress = Date.now();
-      const { symbol, name, indices, candles, metrics, progress } = msg;
-      const now = Date.now();
-      stockData[symbol] = { candles, metrics, name, indices, lastUpdated: now };
-      saveCheckpoint(symbol, now);
-      saveToFirestore(symbol, candles, metrics).catch(() => {});
-
-      // Update progress
-      updateProgress(progress.completed, progress.total,
-        `${progress.completed} von ${progress.total} geladen`);
-
-      // Re-render incrementally every 10 stocks
-      if (progress.completed % 10 === 0 || progress.completed === progress.total) {
-        document.getElementById('filterSection').classList.add('visible');
-        applyCurrentFilter();
-        setStatus('live', `${Object.keys(stockData).length} Aktien`);
-      }
-    }
-
-    if (msg.type === 'error') {
-      errors.push(msg.symbol);
-      updateProgress(msg.progress.completed, msg.progress.total,
-        `${msg.progress.completed} von ${msg.progress.total}`);
-    }
-
-    if (msg.type === 'done') {
-      clearInterval(watchdog);
-      showProgress(false);
-      isLoading = false;
-      activeWorker = null;
-      document.getElementById('loadBtn').disabled = false;
-      document.getElementById('loadBtn').textContent = 'Aktualisieren';
-
-      if (errors.length) {
-        const em = document.getElementById('errorMsg');
-        em.textContent = `Fehler bei ${errors.length} Aktien: ${errors.slice(0,6).join(', ')}${errors.length>6?' ...':''}`;
-        em.classList.add('visible');
-      }
-
-      const n = Object.keys(stockData).length;
-      if (n > 0) {
-        setStatus('live', `${n} Aktien`);
-        document.getElementById('filterSection').classList.add('visible');
-        applyCurrentFilter();
-      }
-    }
-  };
-
-  activeWorker.onerror = (e) => {
-    console.error('Worker error:', e);
-    clearInterval(watchdog);
-    showProgress(false);
-    isLoading = false;
-    activeWorker = null;
-    document.getElementById('loadBtn').disabled = false;
-    // Auto retry after error
-    setTimeout(() => window.loadAllData(), 3000);
-  };
+  if(errors.length) {
+    const em=document.getElementById('errorMsg');
+    em.textContent=`Fehler bei ${errors.length} Aktien: ${errors.slice(0,6).join(', ')}${errors.length>6?' ...':''}`;
+    em.classList.add('visible');
+  }
+  const n=Object.keys(stockData).length;
+  if(n>0) {
+    setStatus('live',`${n} Aktien`);
+    document.getElementById('filterSection').classList.add('visible');
+    applyCurrentFilter();
+  }
 };
 
 // ── Filter ────────────────────────────────────────────────────────────────────
@@ -506,19 +1180,17 @@ window.addEventListener('resize',()=>{
 <style>
 :root{--bg:#080c14;--surf:#0f1623;--surf2:#131d2e;--border:#1a2540;--accent:#2563eb;--cyan:#06b6d4;--green:#22c55e;--red:#ef4444;--purple:#a855f7;--text:#e2e8f0;--muted:#475569;--dim:#1e293b}
 *{box-sizing:border-box;margin:0;padding:0;-webkit-tap-highlight-color:transparent}
-body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;min-height:100vh;overflow-x:hidden}
-/* Solid bar behind status bar - prevents charts showing through */
-body::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);background:var(--bg);z-index:999}
-.cards-grid{padding-bottom:calc(60px + env(safe-area-inset-bottom))}
-#loginScreen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;min-height:-webkit-fill-available;padding:32px;padding-top:calc(32px + env(safe-area-inset-top));padding-bottom:calc(32px + env(safe-area-inset-bottom));gap:22px;background:radial-gradient(ellipse at 50% 0%,#0f1e3a,var(--bg) 70%)}
+body{background:var(--bg);color:var(--text);font-family:-apple-system,BlinkMacSystemFont,'SF Pro Display',sans-serif;min-height:100vh;overflow-x:hidden;padding-top:env(safe-area-inset-top);padding-bottom:env(safe-area-inset-bottom)}
+header{padding-top:calc(12px + env(safe-area-inset-top)) !important}
+.cards-grid{padding-bottom:calc(60px + env(safe-area-inset-bottom)) !important}
+#loginScreen{display:flex;flex-direction:column;align-items:center;justify-content:center;min-height:100vh;padding:32px;gap:22px;background:radial-gradient(ellipse at 50% 0%,#0f1e3a,var(--bg) 70%)}
 .login-logo{font-size:30px;font-weight:800;letter-spacing:-1px;background:linear-gradient(135deg,var(--accent),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .login-sub{font-size:13px;color:var(--muted);text-align:center;line-height:1.7}
 .login-btn{display:flex;align-items:center;gap:10px;padding:14px 28px;background:#fff;border:none;border-radius:14px;color:#1a1a1a;font-size:15px;font-weight:600;cursor:pointer}
 .login-btn svg{width:20px;height:20px}
 .login-note{font-size:11px;color:var(--muted);text-align:center;line-height:1.6}
-#appShell{display:none;flex-direction:column;min-height:100vh;min-height:-webkit-fill-available;position:relative}
-header{position:sticky;top:0;z-index:1000;background:rgba(8,12,20,1);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 14px 10px;padding-top:calc(12px + env(safe-area-inset-top))}
-header::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-area-inset-top);background:#080c14;z-index:1001;pointer-events:none}
+#appShell{display:none;flex-direction:column;min-height:100vh}
+header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 14px 10px}
 .hrow{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .logo{font-size:17px;font-weight:800;letter-spacing:-.5px;background:linear-gradient(90deg,var(--accent),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .header-right{display:flex;align-items:center;gap:8px}
@@ -581,9 +1253,9 @@ header::before{content:'';position:fixed;top:0;left:0;right:0;height:env(safe-ar
 .empty-icon{font-size:36px;margin-bottom:10px}
 .empty-title{font-size:15px;font-weight:700;color:var(--text);margin-bottom:5px}
 .empty-sub{font-size:12px;line-height:1.6}
-..modal-overlay{position:fixed;inset:0;top:0;left:0;right:0;bottom:0;background:rgba(0,0,0,.85);z-index:200;display:none;backdrop-filter:blur(8px);-webkit-backdrop-filter:blur(8px);align-items:flex-end}
+.modal-overlay{position:fixed;inset:0;background:rgba(0,0,0,.75);z-index:200;display:none;backdrop-filter:blur(6px);align-items:flex-end}
 .modal-overlay.visible{display:flex}
-.modal-sheet{background:var(--surf);border-radius:20px 20px 0 0;width:100%;max-height:calc(95vh - env(safe-area-inset-top));overflow-y:auto;border-top:1px solid var(--border);padding-bottom:calc(32px + env(safe-area-inset-bottom))}
+.modal-sheet{background:var(--surf);border-radius:20px 20px 0 0;width:100%;max-height:90vh;overflow-y:auto;border-top:1px solid var(--border);padding-bottom:40px}
 .modal-handle{width:32px;height:3px;background:var(--border);border-radius:2px;margin:10px auto 14px}
 .modal-title{font-size:19px;font-weight:800;padding:0 14px 3px}
 .modal-sym{font-size:12px;color:var(--muted);padding:0 14px 12px}
