@@ -822,11 +822,12 @@ function computeMetrics(candles) {
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
-onAuthStateChanged(auth, user => {
+onAuthStateChanged(auth, async user => {
   currentUser = user;
   if (user) {
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appShell').style.display='flex';
+    await seLoadCustomFromFirestore();
     loadFromFirestore();
     loadFilterFavorites();
   } else {
@@ -959,6 +960,7 @@ window.loadAllData = async () => {
   isLoading=false;
   document.getElementById('loadBtn').disabled=false;
 
+  seSetErrors(errors);
   if(errors.length) {
     const em=document.getElementById('errorMsg');
     em.textContent=`Fehler bei ${errors.length} Aktien: ${errors.slice(0,6).join(', ')}${errors.length>6?' ...':''}`;
@@ -1473,8 +1475,10 @@ function initSwipeToClose(sheetId, overlayId, closeFn) {
 
 // Init after DOM ready
 document.addEventListener('DOMContentLoaded',()=>{
-  initSwipeToClose('modalSheet',      'modalOverlay',      ()=>closeModal(null));
-  initSwipeToClose('filterPopupSheet','filterPopupOverlay',()=>closeFilterPopup(null));
+  initSwipeToClose('modalSheet',       'modalOverlay',       ()=>closeModal(null));
+  initSwipeToClose('filterPopupSheet', 'filterPopupOverlay', ()=>closeFilterPopup(null));
+  initSwipeToClose('stockEditorSheet', 'stockEditorOverlay', ()=>closeStockEditor(null));
+  initSwipeToClose('seEditSheet',      'seEditOverlay',      ()=>closeSeEdit(null));
 });
 
 // ── UI Helpers ────────────────────────────────────────────────────────────────
@@ -1493,6 +1497,246 @@ window.addEventListener('resize',()=>{
     if(el) chart.applyOptions({width:el.clientWidth});
   });
 });
+
+// ── Burger Menu ───────────────────────────────────────────────────────────────
+window.toggleBurgerMenu = (e) => {
+  e.stopPropagation();
+  document.getElementById('burgerMenu').classList.toggle('open');
+};
+window.closeBurgerMenu = () => {
+  document.getElementById('burgerMenu').classList.remove('open');
+};
+document.addEventListener('click', (e) => {
+  const menu = document.getElementById('burgerMenu');
+  if (menu && !menu.closest('.header-right').contains(e.target)) {
+    menu.classList.remove('open');
+  }
+});
+
+// ── Stock Editor ──────────────────────────────────────────────────────────────
+const SE_INDICES = ['DAX','EUROSTOXX','SMI','FTSE100','NASDAQ100','SP500'];
+const SE_LABELS  = {DAX:'DAX',EUROSTOXX:'EuroStoxx',SMI:'SMI',FTSE100:'FTSE 100',NASDAQ100:'NASDAQ 100',SP500:'S&P 500'};
+let seActiveIndex = 'DAX';
+let seErrorFilter = false;
+let seLastErrors  = []; // populated from loadAllData errors
+let seEditTarget  = null; // { sym, idx, origSym }
+
+// Firestore helpers for custom stock list
+async function seLoadCustomFromFirestore() {
+  if (!currentUser) return;
+  try {
+    const snap = await getDocs(collection(db,'users',currentUser.uid,'stockList'));
+    snap.forEach(d => {
+      const {idx, sym, name} = d.data();
+      if (!idx || !sym || !name) return;
+      if (!STOCKS[idx]) return;
+      const exists = STOCKS[idx].some(e => e.s === sym);
+      if (!exists) STOCKS[idx].push({s:sym, n:name});
+      else {
+        const e = STOCKS[idx].find(e=>e.s===sym);
+        if(e) e.n = name;
+      }
+    });
+    // Also apply removals stored as deleted:true
+    const delSnap = await getDocs(collection(db,'users',currentUser.uid,'stockListDeleted'));
+    delSnap.forEach(d => {
+      const {idx, sym} = d.data();
+      if (!idx || !sym || !STOCKS[idx]) return;
+      STOCKS[idx] = STOCKS[idx].filter(e => e.s !== sym);
+    });
+    // Rebuild ALL_STOCKS
+    Object.keys(ALL_STOCKS).forEach(k => delete ALL_STOCKS[k]);
+    Object.entries(STOCKS).forEach(([idx,list]) => {
+      list.forEach(({s,n}) => {
+        if(!ALL_STOCKS[s]) ALL_STOCKS[s]={name:n,indices:[]};
+        if(!ALL_STOCKS[s].indices.includes(idx)) ALL_STOCKS[s].indices.push(idx);
+      });
+    });
+  } catch(e) { console.error('seLoadCustomFromFirestore:', e); }
+}
+
+async function seSaveAddToFirestore(idx, sym, name) {
+  if (!currentUser) return;
+  const id = `${idx}_${sym.replace(/[^a-zA-Z0-9]/g,'_')}`;
+  await setDoc(doc(db,'users',currentUser.uid,'stockList',id), {idx,sym,name});
+}
+
+async function seDeleteFromFirestore(idx, sym) {
+  if (!currentUser) return;
+  const id = `${idx}_${sym.replace(/[^a-zA-Z0-9]/g,'_')}`;
+  // Remove from additions list
+  try { await deleteDoc(doc(db,'users',currentUser.uid,'stockList',id)); } catch(e){}
+  // Mark as deleted (covers built-in stocks)
+  await setDoc(doc(db,'users',currentUser.uid,'stockListDeleted',id), {idx,sym});
+}
+
+async function seUpdateInFirestore(idx, oldSym, newSym, newName) {
+  if (!currentUser) return;
+  // Delete old
+  await seDeleteFromFirestore(idx, oldSym);
+  // Add new
+  await seSaveAddToFirestore(idx, newSym, newName);
+}
+
+window.openStockEditor = async () => {
+  seErrorFilter = false;
+  seActiveIndex = 'DAX';
+  seBuildTabs();
+  seRenderList();
+  seUpdateErrorBtn();
+  document.getElementById('seAddForm').style.display='none';
+  document.getElementById('seAddBtn').style.display='block';
+  document.getElementById('stockEditorOverlay').classList.add('visible');
+  document.body.style.overflow='hidden';
+};
+
+window.closeStockEditor = (e) => {
+  if (!e || e.target === document.getElementById('stockEditorOverlay')) {
+    document.getElementById('stockEditorOverlay').classList.remove('visible');
+    document.getElementById('stockEditorSheet').style.transform='';
+    document.body.style.overflow='';
+  }
+};
+
+function seBuildTabs() {
+  const el = document.getElementById('seTabs');
+  el.innerHTML = '';
+  SE_INDICES.forEach(idx => {
+    const t = document.createElement('div');
+    t.className = 'se-tab' + (idx===seActiveIndex?' active':'');
+    t.textContent = SE_LABELS[idx];
+    t.onclick = () => { seActiveIndex=idx; seBuildTabs(); seRenderList(); };
+    el.appendChild(t);
+  });
+}
+
+function seRenderList() {
+  const el = document.getElementById('seList');
+  el.innerHTML = '';
+  let stocks = (STOCKS[seActiveIndex]||[]);
+  if (seErrorFilter) {
+    stocks = stocks.filter(({s}) => seLastErrors.includes(s));
+  }
+  if (!stocks.length) {
+    el.innerHTML = `<div style="padding:24px 0;text-align:center;color:var(--muted);font-size:13px">${seErrorFilter?'Keine Fehler in diesem Index':'Keine Aktien'}</div>`;
+    return;
+  }
+  stocks.forEach(({s,n}) => {
+    const hasError = seLastErrors.includes(s);
+    const row = document.createElement('div');
+    row.className = 'se-row';
+    row.innerHTML = `<div class="se-row-info">
+      <div class="se-row-name">${n}</div>
+      <div class="se-row-sym${hasError?' error':''}">${s}${hasError?' — Fehler beim Download':''}</div>
+    </div>
+    <button class="se-row-edit" onclick="seOpenEdit('${s.replace(/'/g,"\\'")}','${n.replace(/'/g,"\\'")}')">Bearbeiten</button>`;
+    el.appendChild(row);
+  });
+}
+
+function seUpdateErrorBtn() {
+  const btn = document.getElementById('seErrorFilterBtn');
+  if (seLastErrors.length > 0) {
+    btn.style.display = 'block';
+    btn.classList.toggle('active', seErrorFilter);
+    btn.textContent = seErrorFilter ? 'Alle anzeigen' : `Nur Fehler (${seLastErrors.length})`;
+  } else {
+    btn.style.display = 'none';
+  }
+}
+
+window.toggleEditorErrorFilter = () => {
+  seErrorFilter = !seErrorFilter;
+  seUpdateErrorBtn();
+  seRenderList();
+};
+
+window.seShowAddForm = () => {
+  document.getElementById('seNewName').value='';
+  document.getElementById('seNewSym').value='';
+  document.getElementById('seAddForm').style.display='block';
+  document.getElementById('seAddBtn').style.display='none';
+  setTimeout(()=>document.getElementById('seNewName').focus(),200);
+};
+
+window.seHideAddForm = () => {
+  document.getElementById('seAddForm').style.display='none';
+  document.getElementById('seAddBtn').style.display='block';
+};
+
+window.seConfirmAdd = async () => {
+  const name = document.getElementById('seNewName').value.trim();
+  const sym  = document.getElementById('seNewSym').value.trim().toUpperCase();
+  if (!name || !sym) return;
+  const idx = seActiveIndex;
+  if (STOCKS[idx].some(e=>e.s===sym)) { alert('Dieses Kürzel existiert bereits in diesem Index.'); return; }
+  STOCKS[idx].push({s:sym,n:name});
+  if (!ALL_STOCKS[sym]) ALL_STOCKS[sym]={name,indices:[]};
+  if (!ALL_STOCKS[sym].indices.includes(idx)) ALL_STOCKS[sym].indices.push(idx);
+  seHideAddForm();
+  seRenderList();
+  await seSaveAddToFirestore(idx,sym,name);
+};
+
+// Edit popup
+window.seOpenEdit = (sym, name) => {
+  seEditTarget = {sym, idx:seActiveIndex, origSym:sym};
+  document.getElementById('seEditTitle').textContent = name;
+  document.getElementById('seEditName').value = name;
+  document.getElementById('seEditSym').value  = sym;
+  document.getElementById('seEditOverlay').classList.add('visible');
+  document.body.style.overflow='hidden';
+};
+
+window.closeSeEdit = (e) => {
+  if (!e || e.target===document.getElementById('seEditOverlay')) {
+    document.getElementById('seEditOverlay').classList.remove('visible');
+    document.getElementById('seEditSheet').style.transform='';
+  }
+};
+
+window.seConfirmEdit = async () => {
+  if (!seEditTarget) return;
+  const newName = document.getElementById('seEditName').value.trim();
+  const newSym  = document.getElementById('seEditSym').value.trim().toUpperCase();
+  if (!newName || !newSym) return;
+  const {idx, origSym} = seEditTarget;
+  const entry = STOCKS[idx].find(e=>e.s===origSym);
+  if (entry) { entry.s=newSym; entry.n=newName; }
+  if (ALL_STOCKS[origSym]) {
+    const inds = ALL_STOCKS[origSym].indices;
+    delete ALL_STOCKS[origSym];
+    if (!ALL_STOCKS[newSym]) ALL_STOCKS[newSym]={name:newName,indices:inds};
+    else ALL_STOCKS[newSym].name=newName;
+  }
+  document.getElementById('seEditOverlay').classList.remove('visible');
+  seRenderList();
+  await seUpdateInFirestore(idx,origSym,newSym,newName);
+};
+
+window.seDeleteStock = async () => {
+  if (!seEditTarget) return;
+  const {idx, origSym} = seEditTarget;
+  STOCKS[idx] = STOCKS[idx].filter(e=>e.s!==origSym);
+  if (ALL_STOCKS[origSym]) {
+    ALL_STOCKS[origSym].indices = ALL_STOCKS[origSym].indices.filter(i=>i!==idx);
+    if (!ALL_STOCKS[origSym].indices.length) delete ALL_STOCKS[origSym];
+  }
+  document.getElementById('seEditOverlay').classList.remove('visible');
+  seRenderList();
+  await seDeleteFromFirestore(idx,origSym);
+};
+
+// Expose error list update (called from loadAllData)
+function seSetErrors(errs) {
+  seLastErrors = errs.filter(s=>!s.endsWith('(DB)'));
+  seUpdateErrorBtn();
+}
+
+// Custom stock list is loaded inside the existing onAuthStateChanged above,
+// via seLoadCustomFromFirestore() which is called before loadFromFirestore().
+
+
 </script>
 <style>
 :root{--bg:#080c14;--surf:#0f1623;--surf2:#131d2e;--border:#1a2540;--accent:#2563eb;--cyan:#06b6d4;--green:#22c55e;--red:#ef4444;--purple:#a855f7;--text:#e2e8f0;--muted:#475569;--dim:#1e293b}
@@ -1591,6 +1835,34 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .ms-card{background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:9px 11px}
 .ms-label{font-size:10px;color:var(--muted)}
 .ms-value{font-size:15px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums}
+
+/* Burger Menu */
+.burger-btn{background:none;border:none;cursor:pointer;padding:6px;display:flex;flex-direction:column;gap:4px;justify-content:center;align-items:center;width:36px;height:36px}
+.burger-btn span{display:block;width:20px;height:2px;background:var(--text);border-radius:2px;transition:background .2s}
+.header-right{position:relative}
+.burger-menu{display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--surf);border:1px solid var(--border);border-radius:12px;overflow:hidden;min-width:170px;z-index:300;box-shadow:0 8px 32px rgba(0,0,0,.5)}
+.burger-menu.open{display:block}
+.burger-menu button{display:block;width:100%;padding:12px 16px;background:none;border:none;color:var(--text);font-size:14px;font-weight:600;text-align:left;cursor:pointer;border-bottom:1px solid var(--border)}
+.burger-menu button:last-child{border-bottom:none;color:#ef4444}
+.burger-menu button:active{background:var(--surf2)}
+
+/* Stock Editor */
+.se-tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin-bottom:12px;padding-bottom:2px}
+.se-tabs::-webkit-scrollbar{display:none}
+.se-tab{flex-shrink:0;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surf2);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
+.se-tab.active{border-color:var(--accent);background:rgba(37,99,235,.15);color:var(--accent)}
+.se-list{max-height:52vh;overflow-y:auto;display:flex;flex-direction:column;gap:1px}
+.se-row{display:flex;align-items:center;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--border)}
+.se-row:last-child{border-bottom:none}
+.se-row-info{flex:1;min-width:0}
+.se-row-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+.se-row-sym{font-size:11px;color:var(--muted);font-family:monospace;margin-top:1px}
+.se-row-sym.error{color:#ef4444}
+.se-row-edit{flex-shrink:0;padding:5px 12px;background:var(--surf2);border:1px solid var(--border);border-radius:8px;color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
+.se-row-edit:active{background:var(--dim)}
+.se-error-filter-btn{padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surf2);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
+.se-error-filter-btn.active{border-color:#ef4444;background:rgba(239,68,68,.12);color:#ef4444}
+.se-add-form{background:var(--surf2);border:1px solid var(--border);border-radius:12px;padding:12px;margin-top:8px}
 </style>
 </head>
 <body>
@@ -1609,7 +1881,13 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     <div class="hrow">
       <div class="logo">Stock Scanner</div>
       <div class="header-right">
-        <button class="logout-btn" onclick="doLogout()">Abmelden</button>
+        <button class="burger-btn" onclick="toggleBurgerMenu(event)" aria-label="Menü">
+          <span></span><span></span><span></span>
+        </button>
+        <div class="burger-menu" id="burgerMenu">
+          <button onclick="openStockEditor();closeBurgerMenu()">Aktien bearbeiten</button>
+          <button onclick="doLogout()">Abmelden</button>
+        </div>
       </div>
     </div>
     <div class="hrow">
@@ -1707,6 +1985,49 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 
       <button class="load-btn" onclick="saveFilterFavorite()" style="margin-bottom:10px">Speichern</button>
       <button id="fpDeleteBtn" onclick="deleteFilterFavorite()" style="display:none;width:100%;padding:12px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:12px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer">Löschen</button>
+    </div>
+  </div>
+</div>
+
+<!-- Stock Editor -->
+<div class="modal-overlay" id="stockEditorOverlay" onclick="closeStockEditor(event)">
+  <div class="modal-sheet" id="stockEditorSheet">
+    <div class="modal-handle"></div>
+    <div style="padding:0 14px 24px">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:17px;font-weight:800">Aktien bearbeiten</div>
+        <button class="se-error-filter-btn" id="seErrorFilterBtn" onclick="toggleEditorErrorFilter()" style="display:none">Nur Fehler</button>
+      </div>
+      <!-- Index Tabs -->
+      <div class="se-tabs" id="seTabs"></div>
+      <!-- Stock List -->
+      <div class="se-list" id="seList"></div>
+      <!-- Add Form -->
+      <div class="se-add-form" id="seAddForm" style="display:none">
+        <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--cyan)">Neue Aktie</div>
+        <input class="filter-input" id="seNewName" placeholder="Name (z.B. Volkswagen)" style="width:100%;margin-bottom:8px;font-family:-apple-system,sans-serif;font-size:14px"/>
+        <input class="filter-input" id="seNewSym" placeholder="Yahoo-Kürzel (z.B. VOW3.DE)" style="width:100%;margin-bottom:10px;font-family:monospace;font-size:14px;text-transform:uppercase"/>
+        <div style="display:flex;gap:8px">
+          <button class="load-btn" onclick="seConfirmAdd()" style="flex:1;padding:10px">Hinzufügen</button>
+          <button onclick="seHideAddForm()" style="flex:1;padding:10px;background:var(--surf2);border:1px solid var(--border);border-radius:12px;color:var(--muted);font-size:14px;font-weight:700;cursor:pointer">Abbrechen</button>
+        </div>
+      </div>
+      <button class="load-btn" id="seAddBtn" onclick="seShowAddForm()" style="margin-top:12px">+ Aktie hinzufügen</button>
+    </div>
+  </div>
+</div>
+<!-- Stock Edit Row Popup -->
+<div class="modal-overlay" id="seEditOverlay" onclick="closeSeEdit(event)">
+  <div class="modal-sheet" id="seEditSheet">
+    <div class="modal-handle"></div>
+    <div style="padding:0 14px 24px">
+      <div style="font-size:17px;font-weight:800;margin-bottom:14px" id="seEditTitle">Aktie bearbeiten</div>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px">Name</div>
+      <input class="filter-input" id="seEditName" style="width:100%;margin-bottom:14px;font-family:-apple-system,sans-serif;font-size:15px" autocomplete="off" autocorrect="off"/>
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px">Yahoo-Kürzel</div>
+      <input class="filter-input" id="seEditSym" style="width:100%;margin-bottom:16px;font-family:monospace;font-size:15px;text-transform:uppercase" autocomplete="off" autocorrect="off"/>
+      <button class="load-btn" onclick="seConfirmEdit()" style="margin-bottom:10px">Speichern</button>
+      <button onclick="seDeleteStock()" style="width:100%;padding:12px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.28);border-radius:12px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer">Entfernen</button>
     </div>
   </div>
 </div>
