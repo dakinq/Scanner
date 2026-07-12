@@ -22,7 +22,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getFirestore, doc, setDoc, deleteDoc, collection, getDocs }
+import { getFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -928,25 +928,24 @@ async function loadFromFirestore() {
 async function saveErrorsToFirestore(errors) {
   if (!currentUser) return;
   try {
-    await setDoc(doc(db,'users',currentUser.uid,'meta','scanErrors'), {
-      errors, updatedAt: Date.now()
-    });
+    await setDoc(doc(db,'users',currentUser.uid,'profile','settings'), {
+      scanErrors: errors, updatedAt: Date.now()
+    }, { merge: true });
   } catch(e) { console.error('saveErrorsToFirestore:', e); }
 }
 
 async function loadErrorsFromFirestore() {
   if (!currentUser) return;
   try {
-    const snap = await getDocs(collection(db,'users',currentUser.uid,'meta'));
-    snap.forEach(d => {
-      if (d.id === 'scanErrors') {
-        const data = d.data();
-        if (Array.isArray(data.errors)) {
-          seLastErrors = data.errors;
-          seUpdateErrorBtn();
-        }
+    const snap = await getDoc(doc(db,'users',currentUser.uid,'profile','settings'));
+    if (snap.exists()) {
+      const data = snap.data();
+      if (Array.isArray(data.scanErrors) && data.scanErrors.length > 0) {
+        seLastErrors = data.scanErrors;
+        seUpdateErrorBtn();
+        console.log('Fehler geladen:', seLastErrors.length);
       }
-    });
+    }
   } catch(e) { console.error('loadErrorsFromFirestore:', e); }
 }
 
