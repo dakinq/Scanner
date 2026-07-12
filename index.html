@@ -759,6 +759,42 @@ const STOCKS = {
     {s:'ZBRA',n:'Zebra Tech'},
     {s:'ZBH',n:'Zimmer Biomet'},
     {s:'ZTS',n:'Zoetis'}
+  ],
+  NIKKEI225: [
+    {s:'7203.T',n:'Toyota Motor'},{s:'6758.T',n:'Sony Group'},{s:'9984.T',n:'SoftBank Group'},
+    {s:'8306.T',n:'Mitsubishi UFJ'},{s:'6861.T',n:'Keyence'},{s:'9432.T',n:'NTT'},
+    {s:'7974.T',n:'Nintendo'},{s:'6954.T',n:'Fanuc'},{s:'4063.T',n:'Shin-Etsu Chemical'},
+    {s:'8058.T',n:'Mitsubishi Corp'},{s:'6367.T',n:'Daikin Industries'},{s:'9433.T',n:'KDDI'},
+    {s:'7267.T',n:'Honda Motor'},{s:'8316.T',n:'Sumitomo Mitsui'},{s:'6098.T',n:'Recruit Holdings'},
+    {s:'4568.T',n:'Daiichi Sankyo'},{s:'8035.T',n:'Tokyo Electron'},{s:'4519.T',n:'Chugai Pharmaceutical'},
+    {s:'9022.T',n:'Central Japan Railway'},{s:'7741.T',n:'Hoya'},{s:'8411.T',n:'Mizuho Financial'},
+    {s:'6501.T',n:'Hitachi'},{s:'4543.T',n:'Terumo'},{s:'9020.T',n:'East Japan Railway'},
+    {s:'6702.T',n:'Fujitsu'},{s:'7733.T',n:'Olympus'},{s:'4661.T',n:'Oriental Land'},
+    {s:'8766.T',n:'Tokio Marine'},{s:'6503.T',n:'Mitsubishi Electric'},{s:'7751.T',n:'Canon'},
+    {s:'9983.T',n:'Fast Retailing'},{s:'4901.T',n:'Fujifilm Holdings'},{s:'6645.T',n:'Omron'},
+    {s:'8802.T',n:'Mitsubishi Estate'},{s:'2914.T',n:'Japan Tobacco'},{s:'6971.T',n:'Kyocera'},
+    {s:'7832.T',n:'Bandai Namco'},{s:'4452.T',n:'Kao'},{s:'9613.T',n:'NTT Data'},
+    {s:'6723.T',n:'Renesas Electronics'},{s:'8031.T',n:'Mitsui & Co'},{s:'4307.T',n:'Nomura Research'},
+    {s:'7201.T',n:'Nissan Motor'},{s:'3382.T',n:'Seven & i Holdings'},{s:'8001.T',n:'Itochu'},
+    {s:'5108.T',n:'Bridgestone'},{s:'4502.T',n:'Takeda Pharmaceutical'},{s:'6326.T',n:'Kubota'},
+    {s:'9101.T',n:'Nippon Yusen'},{s:'6902.T',n:'Denso'}
+  ],
+  HANGSENG: [
+    {s:'0700.HK',n:'Tencent Holdings'},{s:'9988.HK',n:'Alibaba Group'},{s:'0941.HK',n:'China Mobile'},
+    {s:'3690.HK',n:'Meituan'},{s:'1299.HK',n:'AIA Group'},{s:'0005.HK',n:'HSBC Holdings'},
+    {s:'2318.HK',n:'Ping An Insurance'},{s:'1810.HK',n:'Xiaomi'},{s:'9618.HK',n:'JD.com'},
+    {s:'0388.HK',n:'HKEx'},{s:'2020.HK',n:'ANTA Sports'},{s:'9999.HK',n:'NetEase'},
+    {s:'1211.HK',n:'BYD Company'},{s:'0016.HK',n:'Sun Hung Kai Properties'},{s:'0011.HK',n:'Hang Seng Bank'},
+    {s:'2269.HK',n:'Wuxi Biologics'},{s:'0003.HK',n:'HK & China Gas'},{s:'0823.HK',n:'Link REIT'},
+    {s:'1038.HK',n:'CK Infrastructure'},{s:'0002.HK',n:'CLP Holdings'},{s:'0001.HK',n:'CK Hutchison'},
+    {s:'0012.HK',n:'Henderson Land'},{s:'0066.HK',n:'MTR Corporation'},{s:'2382.HK',n:'Sunny Optical'},
+    {s:'0027.HK',n:'Galaxy Entertainment'},{s:'1024.HK',n:'Kuaishou Technology'},{s:'9888.HK',n:'Baidu'},
+    {s:'0175.HK',n:'Geely Automobile'},{s:'0006.HK',n:'Power Assets'},{s:'2688.HK',n:'ENN Energy'},
+    {s:'9961.HK',n:'Trip.com'},{s:'1876.HK',n:'Budweiser APAC'},{s:'6690.HK',n:'Haier Smart Home'},
+    {s:'0267.HK',n:'CITIC'},{s:'0762.HK',n:'China Unicom'},{s:'2628.HK',n:'China Life Insurance'},
+    {s:'0883.HK',n:'CNOOC'},{s:'3988.HK',n:'Bank of China'},{s:'0386.HK',n:'Sinopec'},
+    {s:'0857.HK',n:'PetroChina'},{s:'1398.HK',n:'ICBC'},{s:'0939.HK',n:'China Construction Bank'},
+    {s:'2899.HK',n:'Zijin Mining'},{s:'1177.HK',n:'Sino Biopharmaceutical'},{s:'1093.HK',n:'CSPC Pharmaceutical'}
   ]
 };
 
@@ -869,7 +905,9 @@ async function loadFromFirestore() {
     });
     const n = Object.keys(stockData).length;
     if (n>0) {
-      setStatus('live',`${n} Aktien (gespeichert)`);
+      const ts = Math.max(...snap.docs.map(d=>d.data().lastUpdated||0));
+      const dateStr = ts ? new Date(ts).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+      setStatus('live',`${n} Aktien${dateStr?' · '+dateStr:''}`);
       document.getElementById('loadBtn').textContent='Aktualisieren';
       document.getElementById('filterSection').classList.add('visible');
       applyCurrentFilter();
@@ -968,7 +1006,9 @@ window.loadAllData = async () => {
   }
   const n=Object.keys(stockData).length;
   if(n>0) {
-    setStatus('live',`${n} Aktien`);
+    const latestTs = Math.max(...Object.values(stockData).map(d=>d.lastUpdated||0));
+    const dateStr = latestTs ? new Date(latestTs).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    setStatus('live',`${n} Aktien${dateStr?' · '+dateStr:''}`);
     document.getElementById('filterSection').classList.add('visible');
     applyCurrentFilter();
   }
@@ -1434,8 +1474,10 @@ function initSwipeToClose(sheetId, overlayId, closeFn) {
 
   const INTERACTIVE = 'input,textarea,select,button,[contenteditable]';
 
+  // Block background scroll while any overlay is open
+  overlay.addEventListener('touchmove', e=>{ e.preventDefault(); }, {passive:false});
+
   sheet.addEventListener('touchstart', e=>{
-    // Don't interfere with taps on inputs, buttons, etc.
     blocked = !!e.target.closest(INTERACTIVE);
     if(blocked) return;
     if(sheet.scrollTop > 2) return;
@@ -1449,13 +1491,15 @@ function initSwipeToClose(sheetId, overlayId, closeFn) {
     if(sheet.scrollTop > 2) return;
     const dy = e.touches[0].clientY - startY;
     if(dy < 5) return;
+    // Non-passive: we need preventDefault to stop body scroll while dragging down
+    e.preventDefault();
     dragging = true;
     currentY = e.touches[0].clientY;
     sheet.classList.add('dragging');
     const pull = Math.max(0, dy);
     sheet.style.transform = `translateY(${pull}px)`;
     overlay.style.background = `rgba(0,0,0,${Math.max(0, 0.75 - pull/400)})`;
-  },{passive:true});
+  },{passive:false});
 
   sheet.addEventListener('touchend', ()=>{
     if(blocked){ blocked=false; return; }
@@ -1506,45 +1550,35 @@ window.toggleBurgerMenu = (e) => {
 window.closeBurgerMenu = () => {
   document.getElementById('burgerMenu').classList.remove('open');
 };
-document.addEventListener('click', (e) => {
-  const menu = document.getElementById('burgerMenu');
-  if (menu && !menu.closest('.header-right').contains(e.target)) {
-    menu.classList.remove('open');
-  }
+document.addEventListener('click', () => {
+  document.getElementById('burgerMenu')?.classList.remove('open');
 });
 
 // ── Stock Editor ──────────────────────────────────────────────────────────────
-const SE_INDICES = ['DAX','EUROSTOXX','SMI','FTSE100','NASDAQ100','SP500'];
-const SE_LABELS  = {DAX:'DAX',EUROSTOXX:'EuroStoxx',SMI:'SMI',FTSE100:'FTSE 100',NASDAQ100:'NASDAQ 100',SP500:'S&P 500'};
+const SE_INDICES = ['DAX','EUROSTOXX','SMI','FTSE100','NASDAQ100','SP500','NIKKEI225','HANGSENG'];
+const SE_LABELS  = {DAX:'DAX',EUROSTOXX:'EuroStoxx',SMI:'SMI',FTSE100:'FTSE 100',NASDAQ100:'NASDAQ 100',SP500:'S&P 500',NIKKEI225:'Nikkei 225',HANGSENG:'Hang Seng'};
 let seActiveIndex = 'DAX';
 let seErrorFilter = false;
-let seLastErrors  = []; // populated from loadAllData errors
-let seEditTarget  = null; // { sym, idx, origSym }
+let seLastErrors  = [];
+let seEditTarget  = null;
 
-// Firestore helpers for custom stock list
 async function seLoadCustomFromFirestore() {
   if (!currentUser) return;
   try {
     const snap = await getDocs(collection(db,'users',currentUser.uid,'stockList'));
     snap.forEach(d => {
       const {idx, sym, name} = d.data();
-      if (!idx || !sym || !name) return;
-      if (!STOCKS[idx]) return;
+      if (!idx || !sym || !name || !STOCKS[idx]) return;
       const exists = STOCKS[idx].some(e => e.s === sym);
       if (!exists) STOCKS[idx].push({s:sym, n:name});
-      else {
-        const e = STOCKS[idx].find(e=>e.s===sym);
-        if(e) e.n = name;
-      }
+      else { const e=STOCKS[idx].find(e=>e.s===sym); if(e) e.n=name; }
     });
-    // Also apply removals stored as deleted:true
     const delSnap = await getDocs(collection(db,'users',currentUser.uid,'stockListDeleted'));
     delSnap.forEach(d => {
       const {idx, sym} = d.data();
       if (!idx || !sym || !STOCKS[idx]) return;
       STOCKS[idx] = STOCKS[idx].filter(e => e.s !== sym);
     });
-    // Rebuild ALL_STOCKS
     Object.keys(ALL_STOCKS).forEach(k => delete ALL_STOCKS[k]);
     Object.entries(STOCKS).forEach(([idx,list]) => {
       list.forEach(({s,n}) => {
@@ -1564,21 +1598,16 @@ async function seSaveAddToFirestore(idx, sym, name) {
 async function seDeleteFromFirestore(idx, sym) {
   if (!currentUser) return;
   const id = `${idx}_${sym.replace(/[^a-zA-Z0-9]/g,'_')}`;
-  // Remove from additions list
   try { await deleteDoc(doc(db,'users',currentUser.uid,'stockList',id)); } catch(e){}
-  // Mark as deleted (covers built-in stocks)
   await setDoc(doc(db,'users',currentUser.uid,'stockListDeleted',id), {idx,sym});
 }
 
 async function seUpdateInFirestore(idx, oldSym, newSym, newName) {
-  if (!currentUser) return;
-  // Delete old
   await seDeleteFromFirestore(idx, oldSym);
-  // Add new
   await seSaveAddToFirestore(idx, newSym, newName);
 }
 
-window.openStockEditor = async () => {
+window.openStockEditor = () => {
   seErrorFilter = false;
   seActiveIndex = 'DAX';
   seBuildTabs();
@@ -1613,10 +1642,8 @@ function seBuildTabs() {
 function seRenderList() {
   const el = document.getElementById('seList');
   el.innerHTML = '';
-  let stocks = (STOCKS[seActiveIndex]||[]);
-  if (seErrorFilter) {
-    stocks = stocks.filter(({s}) => seLastErrors.includes(s));
-  }
+  let stocks = [...(STOCKS[seActiveIndex]||[])];
+  if (seErrorFilter) stocks = stocks.filter(({s}) => seLastErrors.includes(s));
   if (!stocks.length) {
     el.innerHTML = `<div style="padding:24px 0;text-align:center;color:var(--muted);font-size:13px">${seErrorFilter?'Keine Fehler in diesem Index':'Keine Aktien'}</div>`;
     return;
@@ -1629,13 +1656,14 @@ function seRenderList() {
       <div class="se-row-name">${n}</div>
       <div class="se-row-sym${hasError?' error':''}">${s}${hasError?' — Fehler beim Download':''}</div>
     </div>
-    <button class="se-row-edit" onclick="seOpenEdit('${s.replace(/'/g,"\\'")}','${n.replace(/'/g,"\\'")}')">Bearbeiten</button>`;
+    <button class="se-row-edit" onclick="seOpenEdit(${JSON.stringify(s)},${JSON.stringify(n)})">Bearbeiten</button>`;
     el.appendChild(row);
   });
 }
 
 function seUpdateErrorBtn() {
   const btn = document.getElementById('seErrorFilterBtn');
+  if (!btn) return;
   if (seLastErrors.length > 0) {
     btn.style.display = 'block';
     btn.classList.toggle('active', seErrorFilter);
@@ -1678,14 +1706,12 @@ window.seConfirmAdd = async () => {
   await seSaveAddToFirestore(idx,sym,name);
 };
 
-// Edit popup
 window.seOpenEdit = (sym, name) => {
   seEditTarget = {sym, idx:seActiveIndex, origSym:sym};
   document.getElementById('seEditTitle').textContent = name;
   document.getElementById('seEditName').value = name;
   document.getElementById('seEditSym').value  = sym;
   document.getElementById('seEditOverlay').classList.add('visible');
-  document.body.style.overflow='hidden';
 };
 
 window.closeSeEdit = (e) => {
@@ -1727,16 +1753,10 @@ window.seDeleteStock = async () => {
   await seDeleteFromFirestore(idx,origSym);
 };
 
-// Expose error list update (called from loadAllData)
 function seSetErrors(errs) {
   seLastErrors = errs.filter(s=>!s.endsWith('(DB)'));
   seUpdateErrorBtn();
 }
-
-// Custom stock list is loaded inside the existing onAuthStateChanged above,
-// via seLoadCustomFromFirestore() which is called before loadFromFirestore().
-
-
 </script>
 <style>
 :root{--bg:#080c14;--surf:#0f1623;--surf2:#131d2e;--border:#1a2540;--accent:#2563eb;--cyan:#06b6d4;--green:#22c55e;--red:#ef4444;--purple:#a855f7;--text:#e2e8f0;--muted:#475569;--dim:#1e293b}
@@ -1835,26 +1855,24 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .ms-card{background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:9px 11px}
 .ms-label{font-size:10px;color:var(--muted)}
 .ms-value{font-size:15px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums}
-
 /* Burger Menu */
 .burger-btn{background:none;border:none;cursor:pointer;padding:6px;display:flex;flex-direction:column;gap:4px;justify-content:center;align-items:center;width:36px;height:36px}
-.burger-btn span{display:block;width:20px;height:2px;background:var(--text);border-radius:2px;transition:background .2s}
+.burger-btn span{display:block;width:20px;height:2px;background:var(--text);border-radius:2px}
 .header-right{position:relative}
 .burger-menu{display:none;position:absolute;right:0;top:calc(100% + 6px);background:var(--surf);border:1px solid var(--border);border-radius:12px;overflow:hidden;min-width:170px;z-index:300;box-shadow:0 8px 32px rgba(0,0,0,.5)}
 .burger-menu.open{display:block}
-.burger-menu button{display:block;width:100%;padding:12px 16px;background:none;border:none;color:var(--text);font-size:14px;font-weight:600;text-align:left;cursor:pointer;border-bottom:1px solid var(--border)}
+.burger-menu button{display:block;width:100%;padding:12px 16px;background:none;border:none;border-bottom:1px solid var(--border);color:var(--text);font-size:14px;font-weight:600;text-align:left;cursor:pointer}
 .burger-menu button:last-child{border-bottom:none;color:#ef4444}
 .burger-menu button:active{background:var(--surf2)}
-
 /* Stock Editor */
 .se-tabs{display:flex;gap:6px;overflow-x:auto;scrollbar-width:none;margin-bottom:12px;padding-bottom:2px}
 .se-tabs::-webkit-scrollbar{display:none}
 .se-tab{flex-shrink:0;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surf2);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
 .se-tab.active{border-color:var(--accent);background:rgba(37,99,235,.15);color:var(--accent)}
-.se-list{max-height:52vh;overflow-y:auto;display:flex;flex-direction:column;gap:1px}
-.se-row{display:flex;align-items:center;justify-content:space-between;padding:9px 4px;border-bottom:1px solid var(--border)}
+.se-list{max-height:50vh;overflow-y:auto;display:flex;flex-direction:column}
+.se-row{display:flex;align-items:center;justify-content:space-between;padding:9px 0;border-bottom:1px solid var(--border)}
 .se-row:last-child{border-bottom:none}
-.se-row-info{flex:1;min-width:0}
+.se-row-info{flex:1;min-width:0;padding-right:10px}
 .se-row-name{font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 .se-row-sym{font-size:11px;color:var(--muted);font-family:monospace;margin-top:1px}
 .se-row-sym.error{color:#ef4444}
@@ -1908,6 +1926,8 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     <div class="idx-chip" onclick="setIndex('FTSE100',this)">FTSE 100</div>
     <div class="idx-chip" onclick="setIndex('NASDAQ100',this)">NASDAQ 100</div>
     <div class="idx-chip" onclick="setIndex('SP500',this)">S&amp;P 500</div>
+    <div class="idx-chip" onclick="setIndex('NIKKEI225',this)">Nikkei 225</div>
+    <div class="idx-chip" onclick="setIndex('HANGSENG',this)">Hang Seng</div>
   </div>
 
   <div class="filter-section" id="filterSection">
@@ -1998,15 +2018,12 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
         <div style="font-size:17px;font-weight:800">Aktien bearbeiten</div>
         <button class="se-error-filter-btn" id="seErrorFilterBtn" onclick="toggleEditorErrorFilter()" style="display:none">Nur Fehler</button>
       </div>
-      <!-- Index Tabs -->
       <div class="se-tabs" id="seTabs"></div>
-      <!-- Stock List -->
       <div class="se-list" id="seList"></div>
-      <!-- Add Form -->
       <div class="se-add-form" id="seAddForm" style="display:none">
         <div style="font-size:12px;font-weight:700;margin-bottom:8px;color:var(--cyan)">Neue Aktie</div>
-        <input class="filter-input" id="seNewName" placeholder="Name (z.B. Volkswagen)" style="width:100%;margin-bottom:8px;font-family:-apple-system,sans-serif;font-size:14px"/>
-        <input class="filter-input" id="seNewSym" placeholder="Yahoo-Kürzel (z.B. VOW3.DE)" style="width:100%;margin-bottom:10px;font-family:monospace;font-size:14px;text-transform:uppercase"/>
+        <input class="filter-input" id="seNewName" placeholder="Name (z.B. Toyota Motor)" style="width:100%;margin-bottom:8px;font-family:-apple-system,sans-serif;font-size:14px" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+        <input class="filter-input" id="seNewSym" placeholder="Yahoo-Kürzel (z.B. 7203.T)" style="width:100%;margin-bottom:10px;font-family:monospace;font-size:14px" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
         <div style="display:flex;gap:8px">
           <button class="load-btn" onclick="seConfirmAdd()" style="flex:1;padding:10px">Hinzufügen</button>
           <button onclick="seHideAddForm()" style="flex:1;padding:10px;background:var(--surf2);border:1px solid var(--border);border-radius:12px;color:var(--muted);font-size:14px;font-weight:700;cursor:pointer">Abbrechen</button>
@@ -2023,9 +2040,9 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     <div style="padding:0 14px 24px">
       <div style="font-size:17px;font-weight:800;margin-bottom:14px" id="seEditTitle">Aktie bearbeiten</div>
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px">Name</div>
-      <input class="filter-input" id="seEditName" style="width:100%;margin-bottom:14px;font-family:-apple-system,sans-serif;font-size:15px" autocomplete="off" autocorrect="off"/>
+      <input class="filter-input" id="seEditName" style="width:100%;margin-bottom:14px;font-family:-apple-system,sans-serif;font-size:15px" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px">Yahoo-Kürzel</div>
-      <input class="filter-input" id="seEditSym" style="width:100%;margin-bottom:16px;font-family:monospace;font-size:15px;text-transform:uppercase" autocomplete="off" autocorrect="off"/>
+      <input class="filter-input" id="seEditSym" style="width:100%;margin-bottom:16px;font-family:monospace;font-size:15px" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
       <button class="load-btn" onclick="seConfirmEdit()" style="margin-bottom:10px">Speichern</button>
       <button onclick="seDeleteStock()" style="width:100%;padding:12px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.28);border-radius:12px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer">Entfernen</button>
     </div>
