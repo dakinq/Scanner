@@ -1108,18 +1108,28 @@ window.closeFilterPopup = (e) => {
 
 // ── Filter Popup Variable Chips ───────────────────────────────────────────────
 const FP_VARS = [
-  { name: 'close',      insert: 'close',          desc: 'Aktueller Schlusskurs',                                                example: 'close > 100' },
-  { name: 'open',       insert: 'open',           desc: 'Eröffnungskurs des letzten Handelstages',                             example: 'close > open' },
-  { name: 'high',       insert: 'high',           desc: 'Tageshoch des letzten Handelstages',                                  example: 'high > high52w * 0.99' },
-  { name: 'low',        insert: 'low',            desc: 'Tagestief des letzten Handelstages',                                  example: 'low < ma(50)' },
-  { name: 'volume',     insert: 'volume',         desc: 'Handelsvolumen des letzten Tages',                                    example: 'volume > 1000000' },
-  { name: 'ma(n)',      insert: 'ma(50)',          desc: 'Gleitender Durchschnitt über beliebig viele Tage (z.B. ma(20), ma(50), ma(200))', example: 'close > ma(50) && ma(20) > ma(200)' },
-  { name: 'ema(n)',     insert: 'ema(20)',         desc: 'Exponentieller gleitender Durchschnitt über n Tage (reagiert schneller auf Kursbewegungen)', example: 'close > ema(20) && ema(20) > ema(50)' },
-  { name: 'change(n)',  insert: 'change(1)',       desc: 'Kursveränderung der letzten n Tage in % (z.B. change(1) = heute, change(30) = 30 Tage)', example: 'change(1) > 2 && change(30) > 10' },
-  { name: 'rsi',        insert: 'rsi',            desc: 'Relative Strength Index (14 Perioden, 0–100)',                        example: 'rsi < 30' },
-  { name: 'high52w',    insert: 'high52w',        desc: '52-Wochen-Hoch',                                                      example: 'close >= high52w * 0.95' },
-  { name: 'low52w',     insert: 'low52w',         desc: '52-Wochen-Tief',                                                      example: 'close <= low52w * 1.05' },
-  { name: 'range()',    insert: 'range(20, 5)',    desc: 'Konsolidierung: alle Schlusskurse der letzten X Tage innerhalb ±Y% des aktuellen Kurses', example: 'range(20, 5) && rsi < 50' },
+  { name: 'close',      insert: 'close',          desc: 'Aktueller Schlusskurs',                                                                         example: 'close > 100' },
+  { name: 'open',       insert: 'open',           desc: 'Eröffnungskurs des letzten Handelstages',                                                        example: 'close > open' },
+  { name: 'high',       insert: 'high',           desc: 'Tageshoch des letzten Handelstages',                                                             example: 'high > high52w * 0.99' },
+  { name: 'low',        insert: 'low',            desc: 'Tagestief des letzten Handelstages',                                                             example: 'low < ma(50)' },
+  { name: 'high52w',    insert: 'high52w',        desc: '52-Wochen-Hoch — höchster Kurs der letzten 52 Wochen',                                          example: 'close >= high52w * 0.95' },
+  { name: 'low52w',     insert: 'low52w',         desc: '52-Wochen-Tief — niedrigster Kurs der letzten 52 Wochen',                                       example: 'close <= low52w * 1.05' },
+  { name: 'volume',     insert: 'volume',         desc: 'Handelsvolumen des letzten Tages (Anzahl gehandelter Aktien)',                                   example: 'volume > 1000000' },
+  { name: 'avgvol(n)',  insert: 'avgvol(20)',      desc: 'Durchschnittsvolumen der letzten n Tage — Vergleichsbasis für Volumenausbrüche',                example: 'volume > avgvol(20) * 1.5' },
+  { name: 'rvol',       insert: 'rvol',           desc: 'Relatives Volumen: heutiges Volumen geteilt durch 20-Tage-Schnitt (1.0 = normal, >2 = Ausbruch)', example: 'rvol > 2' },
+  { name: 'ma(n)',      insert: 'ma(50)',          desc: 'Gleitender Durchschnitt über n Tage (z.B. ma(20), ma(50), ma(200))',                            example: 'close > ma(50) && ma(20) > ma(200)' },
+  { name: 'ema(n)',     insert: 'ema(20)',         desc: 'Exponentieller gleitender Durchschnitt über n Tage — reagiert schneller auf Kursbewegungen',    example: 'close > ema(20) && ema(20) > ema(50)' },
+  { name: 'abovema(n)', insert: 'abovema(50,20)', desc: 'Anzahl Tage mit close > ma(n) in den letzten X Tagen — misst Trendstärke. Syntax: abovema(Periode, Tage)', example: 'abovema(50,20) >= 15' },
+  { name: 'change(n)',  insert: 'change(1)',       desc: 'Kursveränderung der letzten n Tage in % (change(1) = heute, change(30) = 30 Tage)',             example: 'change(1) > 2 && change(30) > 10' },
+  { name: 'rsi',        insert: 'rsi',            desc: 'Relative Strength Index (14 Perioden, 0–100) — unter 30 = überverkauft, über 70 = überkauft',   example: 'rsi < 30' },
+  { name: 'macd',       insert: 'macd',           desc: 'MACD-Linie: EMA(12) minus EMA(26) — positiv = Aufwärtsmomentum, negativ = Abwärtsmomentum',    example: 'macd > 0 && macd > signal' },
+  { name: 'signal',     insert: 'signal',         desc: 'MACD Signal-Linie: EMA(9) des MACD — Kreuzung mit macd erzeugt Kauf- oder Verkaufssignale',    example: 'macd > signal' },
+  { name: 'atr(n)',     insert: 'atr(14)',         desc: 'Average True Range über n Tage — misst die durchschnittliche Kursschwankung pro Tag in Punkten', example: 'atr(14) / close * 100 < 2' },
+  { name: 'bb_upper',   insert: 'bb_upper',       desc: 'Oberes Bollinger Band (MA20 + 2x Standardabweichung) — Kurs darüber gilt als überdehnt',       example: 'close > bb_upper' },
+  { name: 'bb_lower',   insert: 'bb_lower',       desc: 'Unteres Bollinger Band (MA20 - 2x Standardabweichung) — Kurs darunter gilt als überverkauft',   example: 'close < bb_lower && rsi < 35' },
+  { name: 'gap',        insert: 'gap',            desc: 'Gap in % zwischen heutigem Open und gestrigem Close — positiv = Gap-up, negativ = Gap-down',    example: 'gap > 2' },
+  { name: 'body',       insert: 'body',           desc: 'Kerzenkörper in % (|close - open| / open x 100) — groß bedeutet starke Tagesbewegung',         example: 'body > 3 && close > open' },
+  { name: 'range()',    insert: 'range(20, 5)',    desc: 'Konsolidierung: alle Schlusskurse der letzten X Tage innerhalb +-Y% des aktuellen Kurses',      example: 'range(20, 5) && rsi < 50' },
 ];
 
 const FP_OPS = [
@@ -1211,30 +1221,104 @@ function applyCurrentFilter() {
     if(activeFilter.startsWith('custom:')) {
       try {
         const cl = candles.map(c => c.close);
-        // ma(n): gleitender Durchschnitt über n Tage
+        const op = candles.map(c => c.open);
+        const hi = candles.map(c => c.high);
+        const lo = candles.map(c => c.low);
+        const vol = candles.map(c => c.volume);
+
+        // ma(n)
         const maFunc = (n) => calcMA(cl, n);
-        // ema(n): exponentieller gleitender Durchschnitt über n Tage
+        // ema(n)
         const emaFunc = (n) => calcEMA(cl, n);
-        // change(n): Kursveränderung der letzten n Tage in %
+        // change(n)
         const changeFunc = (n) => {
           if (!cl.length) return null;
           const ref = cl[Math.max(0, cl.length - 1 - Math.max(n, 1))];
           return ref ? ((cl[cl.length - 1] - ref) / ref) * 100 : null;
         };
-        // range(days, pct): alle Schlusskurse der letzten days Tage innerhalb ±pct% des aktuellen Kurses
+        // range(days, pct)
         const rangeFunc = (days, pct) => {
-          if(!candles.length) return false;
-          const slice = candles.slice(-Math.max(days,1));
+          if (!candles.length) return false;
+          const slice = candles.slice(-Math.max(days, 1));
           const ref = m.close;
-          const lo = ref * (1 - pct/100);
-          const hi = ref * (1 + pct/100);
-          return slice.every(c => c.close >= lo && c.close <= hi);
+          const lo2 = ref * (1 - pct / 100);
+          const hi2 = ref * (1 + pct / 100);
+          return slice.every(c => c.close >= lo2 && c.close <= hi2);
         };
-        return !!(new Function('close','open','high','low','volume',
-          'rsi','high52w','low52w','ma','ema','change','range',`return !!(${activeFilter.slice(7)})`)
-          (m.close,m.open,m.high,m.low,m.volume,
-           m.rsi,m.high52w,m.low52w,maFunc,emaFunc,changeFunc,rangeFunc));
-      } catch{ return false; }
+        // avgvol(n): Durchschnittsvolumen der letzten n Tage
+        const avgvolFunc = (n) => {
+          const slice = vol.slice(-Math.max(n, 1));
+          return slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : null;
+        };
+        // rvol: relatives Volumen (heute / avgvol20)
+        const avg20 = avgvolFunc(20);
+        const rvolVal = avg20 ? vol[vol.length - 1] / avg20 : null;
+        // abovema(period, days): Anzahl Tage mit close > ma(period) in den letzten X Tagen
+        const abovemaFunc = (period, days) => {
+          const slice = cl.slice(-Math.max(days, 1));
+          let count = 0;
+          for (let i = 0; i < slice.length; i++) {
+            const idx2 = cl.length - slice.length + i;
+            const maVal = calcMA(cl.slice(0, idx2 + 1), period);
+            if (maVal !== null && cl[idx2] > maVal) count++;
+          }
+          return count;
+        };
+        // macd & signal
+        const macdLine = (() => {
+          const e12 = calcEMA(cl, 12), e26 = calcEMA(cl, 26);
+          return (e12 !== null && e26 !== null) ? e12 - e26 : null;
+        })();
+        const signalLine = (() => {
+          if (cl.length < 35) return null;
+          const macdSeries = [];
+          for (let i = 25; i < cl.length; i++) {
+            const e12 = calcEMA(cl.slice(0, i + 1), 12);
+            const e26 = calcEMA(cl.slice(0, i + 1), 26);
+            if (e12 !== null && e26 !== null) macdSeries.push(e12 - e26);
+          }
+          return macdSeries.length >= 9 ? calcEMA(macdSeries, 9) : null;
+        })();
+        // atr(n): Average True Range
+        const atrFunc = (n) => {
+          if (candles.length < 2) return null;
+          const trs = [];
+          for (let i = Math.max(1, candles.length - n); i < candles.length; i++) {
+            const prevClose = cl[i - 1];
+            trs.push(Math.max(hi[i] - lo[i], Math.abs(hi[i] - prevClose), Math.abs(lo[i] - prevClose)));
+          }
+          return trs.length ? trs.reduce((a, b) => a + b, 0) / trs.length : null;
+        };
+        // Bollinger Bands (MA20 ± 2σ)
+        const bbBase = cl.slice(-20);
+        const bbMean = bbBase.length === 20 ? bbBase.reduce((a, b) => a + b, 0) / 20 : null;
+        const bbStd = bbMean !== null ? Math.sqrt(bbBase.reduce((s, v) => s + (v - bbMean) ** 2, 0) / 20) : null;
+        const bbUpper = bbMean !== null ? bbMean + 2 * bbStd : null;
+        const bbLower = bbMean !== null ? bbMean - 2 * bbStd : null;
+        // gap: heutiger Open vs. gestriger Close in %
+        const gapVal = candles.length >= 2 ? ((op[op.length - 1] - cl[cl.length - 2]) / cl[cl.length - 2]) * 100 : null;
+        // body: Kerzenkörper in %
+        const bodyVal = op[op.length - 1] ? (Math.abs(cl[cl.length - 1] - op[op.length - 1]) / op[op.length - 1]) * 100 : null;
+
+        return !!(new Function(
+          'close','open','high','low','volume',
+          'rsi','high52w','low52w',
+          'ma','ema','change','range',
+          'avgvol','rvol','abovema',
+          'macd','signal',
+          'atr','bb_upper','bb_lower',
+          'gap','body',
+          `return !!(${activeFilter.slice(7)})`
+        )(
+          m.close, m.open, m.high, m.low, m.volume,
+          m.rsi, m.high52w, m.low52w,
+          maFunc, emaFunc, changeFunc, rangeFunc,
+          avgvolFunc, rvolVal, abovemaFunc,
+          macdLine, signalLine,
+          atrFunc, bbUpper, bbLower,
+          gapVal, bodyVal
+        ));
+      } catch { return false; }
     }
     return true;
   });
