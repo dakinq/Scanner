@@ -810,7 +810,7 @@ Object.entries(STOCKS).forEach(([idx, list]) => {
 // ── State ────────────────────────────────────────────────────────────────────
 let stockData    = {};
 let filteredSyms = [];
-let activeFilter = 'all';
+let activeFilters = new Set(); // leeres Set = alle anzeigen
 let activeIndex  = 'ALL';
 let activeCharts = {};
 let modalChartInst = null;
@@ -1047,13 +1047,15 @@ async function deleteFilterFavoriteFromFirestore(id) {
 
 function renderFilterChips() {
   const container = document.getElementById('filterChips');
-  // Keep "Alle" chip and "+" button, rebuild favorites in between
   const allChip = document.getElementById('chipAll');
   container.innerHTML = '';
   container.appendChild(allChip);
+  // "Alle"-Chip aktiv wenn keine Filter aktiv
+  allChip.classList.toggle('active', activeFilters.size === 0);
+
   filterFavorites.forEach(fav => {
     const chip = document.createElement('div');
-    chip.className = 'filter-chip';
+    chip.className = 'filter-chip' + (activeFilters.has(fav.id) ? ' active' : '');
     chip.textContent = fav.name;
     chip.dataset.id = fav.id;
     let pressTimer;
@@ -1064,9 +1066,13 @@ function renderFilterChips() {
     chip.addEventListener('pointerup', () => clearTimeout(pressTimer));
     chip.addEventListener('pointercancel', () => clearTimeout(pressTimer));
     chip.addEventListener('click', () => {
-      activeFilter = 'custom:' + fav.expr;
-      document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-      chip.classList.add('active');
+      // Toggle diesen Filter an/aus
+      if (activeFilters.has(fav.id)) {
+        activeFilters.delete(fav.id);
+      } else {
+        activeFilters.add(fav.id);
+      }
+      renderFilterChips();
       applyCurrentFilter();
     });
     container.appendChild(chip);
@@ -1079,9 +1085,8 @@ function renderFilterChips() {
 }
 
 window.setFilterAll = () => {
-  activeFilter = 'all';
-  document.querySelectorAll('.filter-chip').forEach(c => c.classList.remove('active'));
-  document.getElementById('chipAll').classList.add('active');
+  activeFilters.clear();
+  renderFilterChips();
   applyCurrentFilter();
 };
 
@@ -1133,15 +1138,21 @@ const FP_VARS = [
 ];
 
 const FP_OPS = [
-  { label: '>', insert: ' > ' },
-  { label: '<', insert: ' < ' },
+  { label: '>',  insert: ' > ' },
+  { label: '<',  insert: ' < ' },
   { label: '>=', insert: ' >= ' },
   { label: '<=', insert: ' <= ' },
   { label: '==', insert: ' == ' },
   { label: '&&', insert: ' && ' },
   { label: '||', insert: ' || ' },
-  { label: '(', insert: '(' },
-  { label: ')', insert: ')' },
+  { label: '!',  insert: '!' },
+  { label: '(',  insert: '(' },
+  { label: ')',  insert: ')' },
+  { label: '+',  insert: ' + ' },
+  { label: '-',  insert: ' - ' },
+  { label: '*',  insert: ' * ' },
+  { label: '/',  insert: ' / ' },
+  { label: '%',  insert: ' % ' },
 ];
 
 function fpAppend(text) {
@@ -1195,20 +1206,105 @@ window.saveFilterFavorite = async () => {
 
 window.deleteFilterFavorite = async () => {
   if (!editingFilterId) return;
+  activeFilters.delete(editingFilterId);
   filterFavorites = filterFavorites.filter(f => f.id !== editingFilterId);
-  if (activeFilter === 'custom:' + (filterFavorites.find(f=>f.id===editingFilterId)?.expr||'')) {
-    activeFilter = 'all';
-  }
   renderFilterChips();
+  applyCurrentFilter();
   document.getElementById('filterPopupOverlay').classList.remove('visible');
-  if (activeFilter === 'all') {
-    document.getElementById('chipAll').classList.add('active');
-    applyCurrentFilter();
-  }
   await deleteFilterFavoriteFromFirestore(editingFilterId);
 };
 
 
+
+function evalExpr(expr, m, candles) {
+  try {
+    const cl = candles.map(c => c.close);
+    const op = candles.map(c => c.open);
+    const hi = candles.map(c => c.high);
+    const lo = candles.map(c => c.low);
+    const vol = candles.map(c => c.volume);
+    const maFunc = (n) => calcMA(cl, n);
+    const emaFunc = (n) => calcEMA(cl, n);
+    const changeFunc = (n) => {
+      if (!cl.length) return null;
+      const ref = cl[Math.max(0, cl.length - 1 - Math.max(n, 1))];
+      return ref ? ((cl[cl.length - 1] - ref) / ref) * 100 : null;
+    };
+    const rangeFunc = (days, pct) => {
+      if (!candles.length) return false;
+      const slice = candles.slice(-Math.max(days, 1));
+      const ref = m.close;
+      const lo2 = ref * (1 - pct / 100);
+      const hi2 = ref * (1 + pct / 100);
+      return slice.every(c => c.close >= lo2 && c.close <= hi2);
+    };
+    const avgvolFunc = (n) => {
+      const slice = vol.slice(-Math.max(n, 1));
+      return slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : null;
+    };
+    const avg20 = avgvolFunc(20);
+    const rvolVal = avg20 ? vol[vol.length - 1] / avg20 : null;
+    const abovemaFunc = (period, days) => {
+      const slice = cl.slice(-Math.max(days, 1));
+      let count = 0;
+      for (let i = 0; i < slice.length; i++) {
+        const idx2 = cl.length - slice.length + i;
+        const maVal = calcMA(cl.slice(0, idx2 + 1), period);
+        if (maVal !== null && cl[idx2] > maVal) count++;
+      }
+      return count;
+    };
+    const macdLine = (() => {
+      const e12 = calcEMA(cl, 12), e26 = calcEMA(cl, 26);
+      return (e12 !== null && e26 !== null) ? e12 - e26 : null;
+    })();
+    const signalLine = (() => {
+      if (cl.length < 35) return null;
+      const macdSeries = [];
+      for (let i = 25; i < cl.length; i++) {
+        const e12 = calcEMA(cl.slice(0, i + 1), 12);
+        const e26 = calcEMA(cl.slice(0, i + 1), 26);
+        if (e12 !== null && e26 !== null) macdSeries.push(e12 - e26);
+      }
+      return macdSeries.length >= 9 ? calcEMA(macdSeries, 9) : null;
+    })();
+    const atrFunc = (n) => {
+      if (candles.length < 2) return null;
+      const trs = [];
+      for (let i = Math.max(1, candles.length - n); i < candles.length; i++) {
+        const prevClose = cl[i - 1];
+        trs.push(Math.max(hi[i] - lo[i], Math.abs(hi[i] - prevClose), Math.abs(lo[i] - prevClose)));
+      }
+      return trs.length ? trs.reduce((a, b) => a + b, 0) / trs.length : null;
+    };
+    const bbBase = cl.slice(-20);
+    const bbMean = bbBase.length === 20 ? bbBase.reduce((a, b) => a + b, 0) / 20 : null;
+    const bbStd = bbMean !== null ? Math.sqrt(bbBase.reduce((s, v) => s + (v - bbMean) ** 2, 0) / 20) : null;
+    const bbUpper = bbMean !== null ? bbMean + 2 * bbStd : null;
+    const bbLower = bbMean !== null ? bbMean - 2 * bbStd : null;
+    const gapVal = candles.length >= 2 ? ((op[op.length - 1] - cl[cl.length - 2]) / cl[cl.length - 2]) * 100 : null;
+    const bodyVal = op[op.length - 1] ? (Math.abs(cl[cl.length - 1] - op[op.length - 1]) / op[op.length - 1]) * 100 : null;
+
+    return !!(new Function(
+      'close','open','high','low','volume',
+      'rsi','high52w','low52w',
+      'ma','ema','change','range',
+      'avgvol','rvol','abovema',
+      'macd','signal',
+      'atr','bb_upper','bb_lower',
+      'gap','body',
+      `return !!(${expr})`
+    )(
+      m.close, m.open, m.high, m.low, m.volume,
+      m.rsi, m.high52w, m.low52w,
+      maFunc, emaFunc, changeFunc, rangeFunc,
+      avgvolFunc, rvolVal, abovemaFunc,
+      macdLine, signalLine,
+      atrFunc, bbUpper, bbLower,
+      gapVal, bodyVal
+    ));
+  } catch { return false; }
+}
 
 function applyCurrentFilter() {
   let syms=Object.keys(stockData);
@@ -1217,114 +1313,17 @@ function applyCurrentFilter() {
     const m=stockData[sym].metrics;
     const candles=stockData[sym].candles||[];
     if(!m) return false;
-    if(activeFilter==='all') return true;
-    if(activeFilter.startsWith('custom:')) {
-      try {
-        const cl = candles.map(c => c.close);
-        const op = candles.map(c => c.open);
-        const hi = candles.map(c => c.high);
-        const lo = candles.map(c => c.low);
-        const vol = candles.map(c => c.volume);
-
-        // ma(n)
-        const maFunc = (n) => calcMA(cl, n);
-        // ema(n)
-        const emaFunc = (n) => calcEMA(cl, n);
-        // change(n)
-        const changeFunc = (n) => {
-          if (!cl.length) return null;
-          const ref = cl[Math.max(0, cl.length - 1 - Math.max(n, 1))];
-          return ref ? ((cl[cl.length - 1] - ref) / ref) * 100 : null;
-        };
-        // range(days, pct)
-        const rangeFunc = (days, pct) => {
-          if (!candles.length) return false;
-          const slice = candles.slice(-Math.max(days, 1));
-          const ref = m.close;
-          const lo2 = ref * (1 - pct / 100);
-          const hi2 = ref * (1 + pct / 100);
-          return slice.every(c => c.close >= lo2 && c.close <= hi2);
-        };
-        // avgvol(n): Durchschnittsvolumen der letzten n Tage
-        const avgvolFunc = (n) => {
-          const slice = vol.slice(-Math.max(n, 1));
-          return slice.length ? slice.reduce((a, b) => a + b, 0) / slice.length : null;
-        };
-        // rvol: relatives Volumen (heute / avgvol20)
-        const avg20 = avgvolFunc(20);
-        const rvolVal = avg20 ? vol[vol.length - 1] / avg20 : null;
-        // abovema(period, days): Anzahl Tage mit close > ma(period) in den letzten X Tagen
-        const abovemaFunc = (period, days) => {
-          const slice = cl.slice(-Math.max(days, 1));
-          let count = 0;
-          for (let i = 0; i < slice.length; i++) {
-            const idx2 = cl.length - slice.length + i;
-            const maVal = calcMA(cl.slice(0, idx2 + 1), period);
-            if (maVal !== null && cl[idx2] > maVal) count++;
-          }
-          return count;
-        };
-        // macd & signal
-        const macdLine = (() => {
-          const e12 = calcEMA(cl, 12), e26 = calcEMA(cl, 26);
-          return (e12 !== null && e26 !== null) ? e12 - e26 : null;
-        })();
-        const signalLine = (() => {
-          if (cl.length < 35) return null;
-          const macdSeries = [];
-          for (let i = 25; i < cl.length; i++) {
-            const e12 = calcEMA(cl.slice(0, i + 1), 12);
-            const e26 = calcEMA(cl.slice(0, i + 1), 26);
-            if (e12 !== null && e26 !== null) macdSeries.push(e12 - e26);
-          }
-          return macdSeries.length >= 9 ? calcEMA(macdSeries, 9) : null;
-        })();
-        // atr(n): Average True Range
-        const atrFunc = (n) => {
-          if (candles.length < 2) return null;
-          const trs = [];
-          for (let i = Math.max(1, candles.length - n); i < candles.length; i++) {
-            const prevClose = cl[i - 1];
-            trs.push(Math.max(hi[i] - lo[i], Math.abs(hi[i] - prevClose), Math.abs(lo[i] - prevClose)));
-          }
-          return trs.length ? trs.reduce((a, b) => a + b, 0) / trs.length : null;
-        };
-        // Bollinger Bands (MA20 ± 2σ)
-        const bbBase = cl.slice(-20);
-        const bbMean = bbBase.length === 20 ? bbBase.reduce((a, b) => a + b, 0) / 20 : null;
-        const bbStd = bbMean !== null ? Math.sqrt(bbBase.reduce((s, v) => s + (v - bbMean) ** 2, 0) / 20) : null;
-        const bbUpper = bbMean !== null ? bbMean + 2 * bbStd : null;
-        const bbLower = bbMean !== null ? bbMean - 2 * bbStd : null;
-        // gap: heutiger Open vs. gestriger Close in %
-        const gapVal = candles.length >= 2 ? ((op[op.length - 1] - cl[cl.length - 2]) / cl[cl.length - 2]) * 100 : null;
-        // body: Kerzenkörper in %
-        const bodyVal = op[op.length - 1] ? (Math.abs(cl[cl.length - 1] - op[op.length - 1]) / op[op.length - 1]) * 100 : null;
-
-        return !!(new Function(
-          'close','open','high','low','volume',
-          'rsi','high52w','low52w',
-          'ma','ema','change','range',
-          'avgvol','rvol','abovema',
-          'macd','signal',
-          'atr','bb_upper','bb_lower',
-          'gap','body',
-          `return !!(${activeFilter.slice(7)})`
-        )(
-          m.close, m.open, m.high, m.low, m.volume,
-          m.rsi, m.high52w, m.low52w,
-          maFunc, emaFunc, changeFunc, rangeFunc,
-          avgvolFunc, rvolVal, abovemaFunc,
-          macdLine, signalLine,
-          atrFunc, bbUpper, bbLower,
-          gapVal, bodyVal
-        ));
-      } catch { return false; }
-    }
-    return true;
+    if(activeFilters.size === 0) return true;
+    // Alle aktiven Filter müssen erfüllt sein (UND)
+    const activeExprs = filterFavorites
+      .filter(f => activeFilters.has(f.id))
+      .map(f => f.expr);
+    return activeExprs.every(expr => evalExpr(expr, m, candles));
   });
   filteredSyms=syms;
   renderCards();
 }
+
 
 window.sortResults = val => {
   const desc=val.endsWith('_desc');
