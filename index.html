@@ -864,6 +864,7 @@ onAuthStateChanged(auth, async user => {
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appShell').style.display='flex';
     await seLoadCustomFromFirestore();
+    await loadErrorsFromFirestore();
     loadFromFirestore();
     loadFilterFavorites();
   } else {
@@ -921,6 +922,40 @@ async function loadFromFirestore() {
     em.classList.add('visible');
     console.error('loadFromFirestore:', e);
   }
+}
+
+// ── Error Persistence ────────────────────────────────────────────────────────
+async function saveErrorsToFirestore(errors) {
+  if (!currentUser) return;
+  try {
+    await setDoc(doc(db,'users',currentUser.uid,'meta','scanErrors'), {
+      errors, updatedAt: Date.now()
+    });
+  } catch(e) { console.error('saveErrorsToFirestore:', e); }
+}
+
+async function loadErrorsFromFirestore() {
+  if (!currentUser) return;
+  try {
+    const snap = await getDocs(collection(db,'users',currentUser.uid,'meta'));
+    snap.forEach(d => {
+      if (d.id === 'scanErrors') {
+        const data = d.data();
+        if (Array.isArray(data.errors)) {
+          seLastErrors = data.errors;
+          seUpdateErrorBtn();
+        }
+      }
+    });
+  } catch(e) { console.error('loadErrorsFromFirestore:', e); }
+}
+
+async function clearErrorInFirestore(sym) {
+  if (!currentUser || !seLastErrors.includes(sym)) return;
+  seLastErrors = seLastErrors.filter(s => s !== sym);
+  await saveErrorsToFirestore(seLastErrors);
+  seUpdateErrorBtn();
+  seRenderList();
 }
 
 // ── Delta Loading ─────────────────────────────────────────────────────────────
@@ -989,6 +1024,8 @@ window.loadAllData = async () => {
           console.error(`Firestore save failed [${sym}]:`, e.code||e.message);
           errors.push(`${sym}(DB)`);
         });
+        // Symbol erfolgreich geladen → Fehlermarkierung entfernen
+        clearErrorInFirestore(sym);
       } catch(e){ errors.push(sym); }
     }));
     await new Promise(r=>setTimeout(r,350));
@@ -1742,9 +1779,17 @@ function seRenderList() {
       <div class="se-row-name">${n}</div>
       <div class="se-row-sym${hasError?' error':''}">${s}${hasError?' — Fehler beim Download':''}</div>
     </div>
-    <button class="se-row-edit" onclick="seOpenEdit(${JSON.stringify(s)},${JSON.stringify(n)})">Bearbeiten</button>`;
+    <button class="se-row-edit" data-sym="${s}" data-name="${n.replace(/"/g,'&quot;')}">Bearbeiten</button>`;
     el.appendChild(row);
   });
+
+  // Event-Delegation statt inline onclick (iOS Safari kompatibel)
+  el.onclick = (e) => {
+    const btn = e.target.closest('.se-row-edit');
+    if (!btn) return;
+    e.stopPropagation();
+    seOpenEdit(btn.dataset.sym, btn.dataset.name);
+  };
 }
 
 function seUpdateErrorBtn() {
@@ -1840,8 +1885,12 @@ window.seDeleteStock = async () => {
 };
 
 function seSetErrors(errs) {
-  seLastErrors = errs.filter(s=>!s.endsWith('(DB)'));
+  const newErrs = errs.filter(s=>!s.endsWith('(DB)'));
+  // Neue Fehler zu bestehenden hinzufügen (bereits behobene wurden schon via clearErrorInFirestore entfernt)
+  newErrs.forEach(s => { if (!seLastErrors.includes(s)) seLastErrors.push(s); });
   seUpdateErrorBtn();
+  seRenderList();
+  saveErrorsToFirestore(seLastErrors);
 }
 </script>
 <style>
