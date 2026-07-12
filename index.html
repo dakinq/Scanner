@@ -941,9 +941,14 @@ async function loadErrorsFromFirestore() {
     if (snap.exists()) {
       const data = snap.data();
       if (Array.isArray(data.scanErrors) && data.scanErrors.length > 0) {
-        seLastErrors = data.scanErrors;
+        // Nur Symbole behalten die noch in einem Index existieren
+        const allSyms = new Set(Object.keys(ALL_STOCKS));
+        seLastErrors = data.scanErrors.filter(s => allSyms.has(s));
+        if (seLastErrors.length !== data.scanErrors.length) {
+          // Bereinigte Liste gleich wieder speichern
+          saveErrorsToFirestore(seLastErrors);
+        }
         seUpdateErrorBtn();
-        console.log('Fehler geladen:', seLastErrors.length);
       }
     }
   } catch(e) { console.error('loadErrorsFromFirestore:', e); }
@@ -1885,8 +1890,11 @@ window.seDeleteStock = async () => {
 
 function seSetErrors(errs) {
   const newErrs = errs.filter(s=>!s.endsWith('(DB)'));
-  // Neue Fehler zu bestehenden hinzufügen (bereits behobene wurden schon via clearErrorInFirestore entfernt)
+  // Neue Fehler hinzufügen
   newErrs.forEach(s => { if (!seLastErrors.includes(s)) seLastErrors.push(s); });
+  // Symbole die nicht mehr in ANY Index existieren entfernen
+  const allSyms = new Set(Object.keys(ALL_STOCKS));
+  seLastErrors = seLastErrors.filter(s => allSyms.has(s));
   seUpdateErrorBtn();
   seRenderList();
   saveErrorsToFirestore(seLastErrors);
