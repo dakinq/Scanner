@@ -1470,28 +1470,30 @@ window.closeModal = e => {
 function initSwipeToClose(sheetId, overlayId, closeFn) {
   const sheet   = document.getElementById(sheetId);
   const overlay = document.getElementById(overlayId);
-  let startY=0, currentY=0, dragging=false, blocked=false;
+  const handle  = sheet.querySelector('.modal-handle');
+  let startY=0, currentY=0, dragging=false, fromHandle=false;
 
-  const INTERACTIVE = 'input,textarea,select,button,[contenteditable]';
+  // Block background scroll while any overlay is open,
+  // but allow native scrolling inside the sheet itself
+  overlay.addEventListener('touchmove', e=>{
+    if (!sheet.contains(e.target)) { e.preventDefault(); }
+  }, {passive:false});
 
-  // Block background scroll while any overlay is open
-  overlay.addEventListener('touchmove', e=>{ e.preventDefault(); }, {passive:false});
-
+  // Only start drag when touch begins on the handle area (handle + ~30px padding)
   sheet.addEventListener('touchstart', e=>{
-    blocked = !!e.target.closest(INTERACTIVE);
-    if(blocked) return;
-    if(sheet.scrollTop > 2) return;
+    if (!handle) return;
+    const handleBottom = handle.getBoundingClientRect().bottom + 30;
+    fromHandle = e.touches[0].clientY <= handleBottom;
+    if (!fromHandle) return;
     startY  = e.touches[0].clientY;
     currentY= startY;
     dragging= false;
   },{passive:true});
 
   sheet.addEventListener('touchmove', e=>{
-    if(blocked) return;
-    if(sheet.scrollTop > 2) return;
+    if(!fromHandle) return;
     const dy = e.touches[0].clientY - startY;
     if(dy < 5) return;
-    // Non-passive: we need preventDefault to stop body scroll while dragging down
     e.preventDefault();
     dragging = true;
     currentY = e.touches[0].clientY;
@@ -1502,7 +1504,8 @@ function initSwipeToClose(sheetId, overlayId, closeFn) {
   },{passive:false});
 
   sheet.addEventListener('touchend', ()=>{
-    if(blocked){ blocked=false; return; }
+    if(!fromHandle){ return; }
+    fromHandle = false;
     if(!dragging){ sheet.style.transform=''; return; }
     sheet.classList.remove('dragging');
     const dy = currentY - startY;
