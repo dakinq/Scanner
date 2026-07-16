@@ -1585,6 +1585,12 @@ window.setModalRange = (months, el) => {
 
 let modalSym = null;
 
+function refreshTvBtn() {
+  if (!modalSym) return;
+  const tv = (ALL_STOCKS[modalSym]||{}).tv || defaultTvSymbol(modalSym);
+  document.getElementById('tvBtn').href = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tv)}`;
+}
+
 window.openModal = sym => {
   const {name,candles,metrics:m}=stockData[sym];
   modalSym = sym;
@@ -1594,6 +1600,7 @@ window.openModal = sym => {
   document.getElementById('mTitle').textContent=name;
   document.getElementById('mSym').textContent=sym;
   document.getElementById('tvEditRow').style.display='none';
+  refreshTvBtn();
   const c1=m.change1d??0,c30=m.change30d??0;
   document.getElementById('mStats').innerHTML=[
     ['Kurs',`${fmt(m.close)}`,''],
@@ -1617,20 +1624,10 @@ window.closeModal = e => {
 };
 
 // ── TradingView ──────────────────────────────────────────────────────────────
-window.openTradingView = () => {
-  if (!modalSym) return;
-  const tv = (ALL_STOCKS[modalSym]||{}).tv || defaultTvSymbol(modalSym);
-  const url = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tv)}`;
-  // Echter <a>-Klick statt window.open(): iOS erkennt Universal Links (öffnet die
-  // TradingView-App, falls installiert) bei einem echten Link-Klick zuverlässiger.
-  const a = document.createElement('a');
-  a.href = url;
-  a.target = '_blank';
-  a.rel = 'noopener';
-  document.body.appendChild(a);
-  a.click();
-  a.remove();
-};
+// Der Button ist ein echter <a>-Link (href wird in openModal/saveTvEdit gesetzt).
+// Kein window.open()/synthetischer Klick: in einer als Homescreen-App installierten
+// PWA (Standalone-Modus) ignoriert iOS window.open()/target=_blank oft komplett -
+// nur ein echter Linktap wird zuverlässig als Navigation bzw. Universal Link erkannt.
 
 window.toggleTvEdit = () => {
   const row = document.getElementById('tvEditRow');
@@ -1646,6 +1643,7 @@ window.saveTvEdit = async () => {
   const val = document.getElementById('tvEditInput').value.trim().toUpperCase();
   if (!val) return;
   await saveTvOverride(modalSym, val);
+  refreshTvBtn();
   document.getElementById('tvEditRow').style.display='none';
 };
 
@@ -2075,7 +2073,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .time-chip{padding:4px 13px;border-radius:20px;border:1px solid var(--border);background:var(--surf2);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
 .time-chip.active{border-color:var(--cyan);background:rgba(6,182,212,.12);color:var(--cyan)}
 .tv-row{display:flex;gap:6px;padding:0 14px 10px}
-.tv-btn{flex:1;padding:9px 13px;border-radius:10px;border:1px solid var(--border);background:var(--surf2);color:var(--text);font-size:13px;font-weight:700;cursor:pointer}
+.tv-btn{flex:1;padding:9px 13px;border-radius:10px;border:1px solid var(--border);background:var(--surf2);color:var(--text);font-size:13px;font-weight:700;cursor:pointer;text-decoration:none;display:flex;align-items:center;justify-content:center}
 .tv-btn:active{background:var(--dim)}
 .tv-edit-btn{flex-shrink:0;width:36px;padding:9px 0;border-radius:10px;border:1px solid var(--border);background:var(--surf2);color:var(--muted);font-size:14px;cursor:pointer}
 .tv-edit-btn:active{background:var(--dim)}
@@ -2204,7 +2202,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
       <div class="time-chip active" onclick="setModalRange(12,this)">1J</div>
     </div>
     <div class="tv-row">
-      <button class="tv-btn" onclick="openTradingView()">TradingView öffnen</button>
+      <a class="tv-btn" id="tvBtn" href="#" rel="noopener">TradingView öffnen</a>
       <button class="tv-edit-btn" onclick="toggleTvEdit()" title="TradingView-Symbol bearbeiten">&#9998;</button>
     </div>
     <div class="tv-edit-row" id="tvEditRow">
