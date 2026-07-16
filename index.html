@@ -1628,6 +1628,15 @@ window.closeModal = e => {
 // Kein window.open()/synthetischer Klick: in einer als Homescreen-App installierten
 // PWA (Standalone-Modus) ignoriert iOS window.open()/target=_blank oft komplett -
 // nur ein echter Linktap wird zuverlässig als Navigation bzw. Universal Link erkannt.
+// Zusätzlich: bevor der Link normal navigiert, wird zuerst das native iOS-Teilen-Menü
+// versucht - darüber lässt sich der Link ggf. direkt an eine installierte
+// TradingView-App übergeben (oder in echtem Safari öffnen/kopieren).
+window.shareTvLink = e => {
+  if (!navigator.share) return; // kein Web-Share-API -> normaler Linktap greift
+  e.preventDefault();
+  const url = document.getElementById('tvBtn').href;
+  navigator.share({ url, title: 'TradingView' }).catch(()=>{});
+};
 
 window.toggleTvEdit = () => {
   const row = document.getElementById('tvEditRow');
@@ -2202,7 +2211,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
       <div class="time-chip active" onclick="setModalRange(12,this)">1J</div>
     </div>
     <div class="tv-row">
-      <a class="tv-btn" id="tvBtn" href="#" rel="noopener">TradingView öffnen</a>
+      <a class="tv-btn" id="tvBtn" href="#" rel="noopener" onclick="shareTvLink(event)">TradingView öffnen</a>
       <button class="tv-edit-btn" onclick="toggleTvEdit()" title="TradingView-Symbol bearbeiten">&#9998;</button>
     </div>
     <div class="tv-edit-row" id="tvEditRow">
