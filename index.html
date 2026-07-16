@@ -798,11 +798,30 @@ const STOCKS = {
   ]
 };
 
+// ── TradingView-Symbol-Zuordnung ────────────────────────────────────────────
+// Yahoo-Suffix -> TradingView-Börsenkürzel. Nur ein Startwert - kann pro Aktie
+// im Chart-Detail (Stift-Icon neben dem TradingView-Button) korrigiert werden.
+const TV_EXCHANGE_MAP = {
+  DE:'XETR', PA:'EURONEXT', AS:'EURONEXT', BR:'EURONEXT',
+  MI:'MIL', MC:'BME', SW:'SIX', L:'LSE', HE:'HEX', HK:'HKEX', T:'TSE'
+};
+function defaultTvSymbol(sym) {
+  const dot = sym.lastIndexOf('.');
+  if (dot === -1) return sym; // US-Werte ohne Suffix (NASDAQ/NYSE - TradingView löst i.d.R. selbst auf)
+  const ticker = sym.slice(0, dot);
+  const suffix = sym.slice(dot + 1).toUpperCase();
+  const exch = TV_EXCHANGE_MAP[suffix];
+  if (!exch) return ticker;
+  if (suffix === 'HK') return `${exch}:${ticker.replace(/^0+/, '')}`;
+  return `${exch}:${ticker}`;
+}
+
 // Build flat index map
 const ALL_STOCKS = {};
 Object.entries(STOCKS).forEach(([idx, list]) => {
-  list.forEach(({s,n}) => {
-    if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [] };
+  list.forEach(({s,n,tv}) => {
+    if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [], tv: tv || defaultTvSymbol(s) };
+    else if (tv) ALL_STOCKS[s].tv = tv;
     if (!ALL_STOCKS[s].indices.includes(idx)) ALL_STOCKS[s].indices.push(idx);
   });
 });
@@ -1371,7 +1390,9 @@ window.sortResults = val => {
   const field=val.replace('_desc','').replace('_asc','');
   filteredSyms.sort((a,b)=>{
     if(field==='name') return stockData[a].name.localeCompare(stockData[b].name);
-    return ((stockData[a].metrics??{})[field]??0-((stockData[b].metrics??{})[field]??0))*(desc?-1:1);
+    const va = (stockData[a].metrics??{})[field] ?? 0;
+    const vb = (stockData[b].metrics??{})[field] ?? 0;
+    return (va - vb) * (desc?-1:1);
   });
   renderCards();
 };
@@ -1562,13 +1583,17 @@ window.setModalRange = (months, el) => {
   buildModalChart(months);
 };
 
+let modalSym = null;
+
 window.openModal = sym => {
   const {name,candles,metrics:m}=stockData[sym];
+  modalSym = sym;
   modalCandles = candles;
   modalMonths = 12;
   document.querySelectorAll('.time-chip').forEach((c,i)=>c.classList.toggle('active',i===3));
   document.getElementById('mTitle').textContent=name;
   document.getElementById('mSym').textContent=sym;
+  document.getElementById('tvEditRow').style.display='none';
   const c1=m.change1d??0,c30=m.change30d??0;
   document.getElementById('mStats').innerHTML=[
     ['Kurs',`${fmt(m.close)}`,''],
@@ -1588,6 +1613,31 @@ window.closeModal = e => {
   document.getElementById('modalOverlay').classList.remove('visible');
   document.getElementById('modalSheet').style.transform='';
   document.body.style.overflow='';
+  modalSym = null;
+};
+
+// ── TradingView ──────────────────────────────────────────────────────────────
+window.openTradingView = () => {
+  if (!modalSym) return;
+  const tv = (ALL_STOCKS[modalSym]||{}).tv || defaultTvSymbol(modalSym);
+  window.open(`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tv)}`, '_blank');
+};
+
+window.toggleTvEdit = () => {
+  const row = document.getElementById('tvEditRow');
+  const showing = row.style.display !== 'none';
+  if (showing) { row.style.display='none'; return; }
+  document.getElementById('tvEditInput').value = (ALL_STOCKS[modalSym]||{}).tv || defaultTvSymbol(modalSym);
+  row.style.display='flex';
+  setTimeout(()=>document.getElementById('tvEditInput').focus(),50);
+};
+
+window.saveTvEdit = async () => {
+  if (!modalSym) return;
+  const val = document.getElementById('tvEditInput').value.trim().toUpperCase();
+  if (!val) return;
+  await saveTvOverride(modalSym, val);
+  document.getElementById('tvEditRow').style.display='none';
 };
 
 // ── Swipe-to-close ────────────────────────────────────────────────────────────
@@ -1694,11 +1744,11 @@ async function seLoadCustomFromFirestore() {
   try {
     const snap = await getDocs(collection(db,'users',currentUser.uid,'stockList'));
     snap.forEach(d => {
-      const {idx, sym, name} = d.data();
+      const {idx, sym, name, tv} = d.data();
       if (!idx || !sym || !name || !STOCKS[idx]) return;
       const exists = STOCKS[idx].some(e => e.s === sym);
-      if (!exists) STOCKS[idx].push({s:sym, n:name});
-      else { const e=STOCKS[idx].find(e=>e.s===sym); if(e) e.n=name; }
+      if (!exists) STOCKS[idx].push({s:sym, n:name, tv: tv||undefined});
+      else { const e=STOCKS[idx].find(e=>e.s===sym); if(e){ e.n=name; if(tv) e.tv=tv; } }
     });
     const delSnap = await getDocs(collection(db,'users',currentUser.uid,'stockListDeleted'));
     delSnap.forEach(d => {
@@ -1708,8 +1758,9 @@ async function seLoadCustomFromFirestore() {
     });
     Object.keys(ALL_STOCKS).forEach(k => delete ALL_STOCKS[k]);
     Object.entries(STOCKS).forEach(([idx,list]) => {
-      list.forEach(({s,n}) => {
-        if(!ALL_STOCKS[s]) ALL_STOCKS[s]={name:n,indices:[]};
+      list.forEach(({s,n,tv}) => {
+        if(!ALL_STOCKS[s]) ALL_STOCKS[s]={name:n,indices:[], tv: tv || defaultTvSymbol(s)};
+        else if (tv) ALL_STOCKS[s].tv = tv;
         if(!ALL_STOCKS[s].indices.includes(idx)) ALL_STOCKS[s].indices.push(idx);
       });
     });
@@ -1732,6 +1783,26 @@ async function seDeleteFromFirestore(idx, sym) {
 async function seUpdateInFirestore(idx, oldSym, newSym, newName) {
   await seDeleteFromFirestore(idx, oldSym);
   await seSaveAddToFirestore(idx, newSym, newName);
+}
+
+// TradingView-Symbol als drittes Attribut direkt an der Aktie speichern
+async function saveTvOverride(sym, tv) {
+  const entry = ALL_STOCKS[sym];
+  if (!entry) return;
+  entry.tv = tv;
+  const indices = entry.indices || [];
+  indices.forEach(idx => {
+    const listEntry = (STOCKS[idx]||[]).find(e => e.s === sym);
+    if (listEntry) listEntry.tv = tv;
+  });
+  if (!currentUser) return; // ohne Login nur für diese Sitzung
+  for (const idx of indices) {
+    const listEntry = (STOCKS[idx]||[]).find(e => e.s === sym);
+    const name = listEntry ? listEntry.n : entry.name;
+    const id = `${idx}_${sym.replace(/[^a-zA-Z0-9]/g,'_')}`;
+    try { await setDoc(doc(db,'users',currentUser.uid,'stockList',id), {idx, sym, name, tv}, {merge:true}); }
+    catch(e) { console.error('saveTvOverride:', e); }
+  }
 }
 
 window.openStockEditor = () => {
@@ -1939,8 +2010,9 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .filter-section{display:none;padding:10px 14px;border-bottom:1px solid var(--border)}
 .filter-section.visible{display:block}
 .filter-label{font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:7px}
-.filter-chips{display:flex;gap:6px;flex-wrap:wrap;margin-bottom:8px}
-.filter-chip{padding:5px 11px;border-radius:20px;border:1px solid var(--border);background:var(--surf);color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center}
+.filter-chips{display:flex;gap:6px;flex-wrap:nowrap;overflow-x:auto;margin-bottom:8px;scrollbar-width:none}
+.filter-chips::-webkit-scrollbar{display:none}
+.filter-chip{flex-shrink:0;padding:5px 11px;border-radius:20px;border:1px solid var(--border);background:var(--surf);color:var(--muted);font-size:12px;cursor:pointer;white-space:nowrap;display:inline-flex;align-items:center}
 .filter-chip.active{border-color:var(--cyan);background:rgba(6,182,212,.12);color:var(--cyan)}
 .custom-row{display:flex;gap:7px;align-items:center}
 .filter-input{flex:1;background:var(--surf2);border:1px solid var(--border);border-radius:8px;padding:7px 10px;color:var(--text);font-size:12px;outline:none;font-family:monospace}
@@ -1993,6 +2065,14 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .time-chips{display:flex;gap:6px;padding:0 14px 10px}
 .time-chip{padding:4px 13px;border-radius:20px;border:1px solid var(--border);background:var(--surf2);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer;transition:all .15s}
 .time-chip.active{border-color:var(--cyan);background:rgba(6,182,212,.12);color:var(--cyan)}
+.tv-row{display:flex;gap:6px;padding:0 14px 10px}
+.tv-btn{flex:1;padding:9px 13px;border-radius:10px;border:1px solid var(--border);background:var(--surf2);color:var(--text);font-size:13px;font-weight:700;cursor:pointer}
+.tv-btn:active{background:var(--dim)}
+.tv-edit-btn{flex-shrink:0;width:36px;padding:9px 0;border-radius:10px;border:1px solid var(--border);background:var(--surf2);color:var(--muted);font-size:14px;cursor:pointer}
+.tv-edit-btn:active{background:var(--dim)}
+.tv-edit-row{display:none;gap:6px;padding:0 14px 10px}
+.tv-edit-row .filter-input{font-size:13px;padding:8px 10px}
+.tv-edit-save{flex-shrink:0;padding:8px 14px;border-radius:10px;border:1px solid var(--cyan);background:rgba(6,182,212,.12);color:var(--cyan);font-size:12px;font-weight:700;cursor:pointer}
 .ms-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 14px}
 .ms-card{background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:9px 11px}
 .ms-label{font-size:10px;color:var(--muted)}
@@ -2113,6 +2193,14 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
       <div class="time-chip" onclick="setModalRange(3,this)">3M</div>
       <div class="time-chip" onclick="setModalRange(6,this)">6M</div>
       <div class="time-chip active" onclick="setModalRange(12,this)">1J</div>
+    </div>
+    <div class="tv-row">
+      <button class="tv-btn" onclick="openTradingView()">TradingView öffnen</button>
+      <button class="tv-edit-btn" onclick="toggleTvEdit()" title="TradingView-Symbol bearbeiten">&#9998;</button>
+    </div>
+    <div class="tv-edit-row" id="tvEditRow">
+      <input class="filter-input" id="tvEditInput" placeholder="z.B. XETR:SAP" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
+      <button class="tv-edit-save" onclick="saveTvEdit()">Speichern</button>
     </div>
     <div class="modal-chart" id="mChart"></div>
     <div class="ms-grid" id="mStats"></div>
