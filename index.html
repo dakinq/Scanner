@@ -1620,7 +1620,16 @@ window.closeModal = e => {
 window.openTradingView = () => {
   if (!modalSym) return;
   const tv = (ALL_STOCKS[modalSym]||{}).tv || defaultTvSymbol(modalSym);
-  window.open(`https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tv)}`, '_blank');
+  const url = `https://www.tradingview.com/chart/?symbol=${encodeURIComponent(tv)}`;
+  // Echter <a>-Klick statt window.open(): iOS erkennt Universal Links (öffnet die
+  // TradingView-App, falls installiert) bei einem echten Link-Klick zuverlässiger.
+  const a = document.createElement('a');
+  a.href = url;
+  a.target = '_blank';
+  a.rel = 'noopener';
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
 };
 
 window.toggleTvEdit = () => {
