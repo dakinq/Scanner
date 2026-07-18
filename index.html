@@ -2081,6 +2081,136 @@ function seSetErrors(errs) {
   seRenderList();
   saveErrorsToFirestore(seLastErrors);
 }
+
+// ── Push-Settings UI ──────────────────────────────────────────────────────────
+window.openPushSettings = async () => {
+  document.getElementById('pushSettingsOverlay').classList.add('visible');
+  document.getElementById('pushStatusText').textContent = 'Wird geprüft...';
+  await refreshPushStatus();
+  renderPushStatus();
+};
+window.closePushSettings = e => {
+  if (e && e.target !== document.getElementById('pushSettingsOverlay')) return;
+  document.getElementById('pushSettingsOverlay').classList.remove('visible');
+};
+function renderPushStatus() {
+  const dot = document.getElementById('pushStatusDot');
+  const txt = document.getElementById('pushStatusText');
+  const btn = document.getElementById('pushToggleBtn');
+  if (pushSubActive) {
+    dot.style.background = 'var(--green)';
+    txt.textContent = 'Aktiv auf diesem Gerät';
+    btn.textContent = 'Deaktivieren';
+  } else {
+    dot.style.background = 'var(--muted)';
+    txt.textContent = 'Nicht aktiviert';
+    btn.textContent = 'Aktivieren';
+  }
+}
+window.togglePush = async () => {
+  const btn = document.getElementById('pushToggleBtn');
+  btn.disabled = true;
+  try {
+    if (pushSubActive) await disablePush();
+    else await enablePush();
+  } catch(e) {
+    console.error('togglePush:', e);
+    alert('Fehler: ' + (e.message || e));
+  }
+  btn.disabled = false;
+  renderPushStatus();
+};
+
+// ── Alerts-Liste UI ───────────────────────────────────────────────────────────
+window.openAlertsList = async () => {
+  await loadAlerts();
+  renderAlertsList();
+  document.getElementById('alertsListOverlay').classList.add('visible');
+};
+window.closeAlertsList = e => {
+  if (e && e.target !== document.getElementById('alertsListOverlay')) return;
+  document.getElementById('alertsListOverlay').classList.remove('visible');
+};
+function renderAlertsList() {
+  const body = document.getElementById('alertsListBody');
+  if (!pushAlerts.length) {
+    body.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:20px 0;text-align:center">Noch keine Alarme gesetzt.<br>Öffne eine Aktie und tippe auf die Glocke 🔔</div>`;
+    return;
+  }
+  body.innerHTML = pushAlerts.map(a => {
+    const nm = ALL_STOCKS[a.symbol]?.name ?? a.symbol;
+    const dirTxt = a.direction === 'above' ? 'über' : 'unter';
+    const valTxt = a.type === 'percent' ? `${a.target}%` : `${fmt(a.target)}`;
+    const triggered = a.triggeredAt ? ' · ausgelöst' : '';
+    return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--surf2);border-radius:12px;padding:12px 14px;margin-bottom:10px;cursor:pointer" onclick="window.openAlertEditor('${a.symbol}','${a.id}')">
+      <div>
+        <div style="font-size:14px;font-weight:700">${nm} <span style="color:var(--muted);font-weight:500;font-size:12px">(${a.symbol})</span></div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">${a.type === 'percent' ? 'Änderung' : 'Kurs'} ${dirTxt} ${valTxt}${triggered}</div>
+      </div>
+      <div style="color:var(--muted);font-size:18px">›</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Alarm-Editor UI ───────────────────────────────────────────────────────────
+let aeSymCurrent = null, aeIdCurrent = null, aeType = 'price', aeDir = 'above';
+
+window.openAlertEditor = (sym, alertId) => {
+  aeSymCurrent = sym;
+  aeIdCurrent = alertId || null;
+  const existing = alertId ? pushAlerts.find(a => a.id === alertId) : null;
+  aeType = existing?.type || 'price';
+  aeDir  = existing?.direction || 'above';
+
+  document.getElementById('aeSym').textContent = `${ALL_STOCKS[sym]?.name ?? sym} (${sym})`;
+  document.getElementById('aeTarget').value = existing?.target ?? '';
+  document.getElementById('aeDeleteBtn').style.display = existing ? 'block' : 'none';
+  setAlertType(aeType);
+  setAlertDir(aeDir);
+
+  document.getElementById('alertsListOverlay').classList.remove('visible');
+  document.getElementById('modalOverlay').classList.remove('visible');
+  document.getElementById('alertEditorOverlay').classList.add('visible');
+};
+window.closeAlertEditor = e => {
+  if (e && e.target !== document.getElementById('alertEditorOverlay')) return;
+  document.getElementById('alertEditorOverlay').classList.remove('visible');
+};
+window.setAlertType = t => {
+  aeType = t;
+  document.getElementById('aeTypePrice').classList.toggle('active', t === 'price');
+  document.getElementById('aeTypePercent').classList.toggle('active', t === 'percent');
+  document.getElementById('aeTargetLabel').textContent = t === 'percent' ? 'Änderung in % (seit jetzt)' : 'Zielkurs';
+  document.getElementById('aeTarget').placeholder = t === 'percent' ? 'z.B. 5' : 'z.B. 150.00';
+};
+window.setAlertDir = d => {
+  aeDir = d;
+  document.getElementById('aeDirAbove').classList.toggle('active', d === 'above');
+  document.getElementById('aeDirBelow').classList.toggle('active', d === 'below');
+};
+window.saveAlertEditor = async () => {
+  const val = parseFloat(document.getElementById('aeTarget').value);
+  if (isNaN(val)) { alert('Bitte einen gültigen Wert eingeben.'); return; }
+  if (!currentUser) { alert('Bitte zuerst anmelden.'); return; }
+  const baseline = stockData[aeSymCurrent]?.metrics?.close ?? null;
+  await saveAlert({
+    id: aeIdCurrent,
+    symbol: aeSymCurrent,
+    name: ALL_STOCKS[aeSymCurrent]?.name ?? aeSymCurrent,
+    type: aeType,
+    direction: aeDir,
+    target: val,
+    baseline: aeType === 'percent' ? baseline : null,
+    active: true,
+    triggeredAt: null
+  });
+  document.getElementById('alertEditorOverlay').classList.remove('visible');
+};
+window.deleteAlertEditor = async () => {
+  if (!aeIdCurrent) return;
+  await deleteAlert(aeIdCurrent);
+  document.getElementById('alertEditorOverlay').classList.remove('visible');
+};
 </script>
 <style>
 :root{--bg:#080c14;--surf:#0f1623;--surf2:#131d2e;--border:#1a2540;--accent:#2563eb;--cyan:#06b6d4;--green:#22c55e;--red:#ef4444;--purple:#a855f7;--text:#e2e8f0;--muted:#475569;--dim:#1e293b}
@@ -2461,137 +2591,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js');
 }
-
-// ── Push-Settings UI ──────────────────────────────────────────────────────────
-window.openPushSettings = async () => {
-  document.getElementById('pushSettingsOverlay').classList.add('visible');
-  document.getElementById('pushStatusText').textContent = 'Wird geprüft...';
-  await refreshPushStatus();
-  renderPushStatus();
-};
-window.closePushSettings = e => {
-  if (e && e.target !== document.getElementById('pushSettingsOverlay')) return;
-  document.getElementById('pushSettingsOverlay').classList.remove('visible');
-};
-function renderPushStatus() {
-  const dot = document.getElementById('pushStatusDot');
-  const txt = document.getElementById('pushStatusText');
-  const btn = document.getElementById('pushToggleBtn');
-  if (pushSubActive) {
-    dot.style.background = 'var(--green)';
-    txt.textContent = 'Aktiv auf diesem Gerät';
-    btn.textContent = 'Deaktivieren';
-  } else {
-    dot.style.background = 'var(--muted)';
-    txt.textContent = 'Nicht aktiviert';
-    btn.textContent = 'Aktivieren';
-  }
-}
-window.togglePush = async () => {
-  const btn = document.getElementById('pushToggleBtn');
-  btn.disabled = true;
-  try {
-    if (pushSubActive) await disablePush();
-    else await enablePush();
-  } catch(e) {
-    console.error('togglePush:', e);
-    alert('Fehler: ' + (e.message || e));
-  }
-  btn.disabled = false;
-  renderPushStatus();
-};
-
-// ── Alerts-Liste UI ───────────────────────────────────────────────────────────
-window.openAlertsList = async () => {
-  await loadAlerts();
-  renderAlertsList();
-  document.getElementById('alertsListOverlay').classList.add('visible');
-};
-window.closeAlertsList = e => {
-  if (e && e.target !== document.getElementById('alertsListOverlay')) return;
-  document.getElementById('alertsListOverlay').classList.remove('visible');
-};
-function renderAlertsList() {
-  const body = document.getElementById('alertsListBody');
-  if (!pushAlerts.length) {
-    body.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:20px 0;text-align:center">Noch keine Alarme gesetzt.<br>Öffne eine Aktie und tippe auf die Glocke &#128276;</div>`;
-    return;
-  }
-  body.innerHTML = pushAlerts.map(a => {
-    const nm = ALL_STOCKS[a.symbol]?.name ?? a.symbol;
-    const dirTxt = a.direction === 'above' ? 'über' : 'unter';
-    const valTxt = a.type === 'percent' ? `${a.target}%` : `${fmt(a.target)}`;
-    const triggered = a.triggeredAt ? ' · ausgelöst' : '';
-    return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--surf2);border-radius:12px;padding:12px 14px;margin-bottom:10px;cursor:pointer" onclick="openAlertEditor('${a.symbol}','${a.id}')">
-      <div>
-        <div style="font-size:14px;font-weight:700">${nm} <span style="color:var(--muted);font-weight:500;font-size:12px">(${a.symbol})</span></div>
-        <div style="font-size:12px;color:var(--muted);margin-top:2px">${a.type === 'percent' ? 'Änderung' : 'Kurs'} ${dirTxt} ${valTxt}${triggered}</div>
-      </div>
-      <div style="color:var(--muted);font-size:18px">&#8250;</div>
-    </div>`;
-  }).join('');
-}
-
-// ── Alarm-Editor UI ───────────────────────────────────────────────────────────
-let aeSymCurrent = null, aeIdCurrent = null, aeType = 'price', aeDir = 'above';
-
-window.openAlertEditor = (sym, alertId) => {
-  aeSymCurrent = sym;
-  aeIdCurrent = alertId || null;
-  const existing = alertId ? pushAlerts.find(a => a.id === alertId) : null;
-  aeType = existing?.type || 'price';
-  aeDir  = existing?.direction || 'above';
-
-  document.getElementById('aeSym').textContent = `${ALL_STOCKS[sym]?.name ?? sym} (${sym})`;
-  document.getElementById('aeTarget').value = existing?.target ?? '';
-  document.getElementById('aeDeleteBtn').style.display = existing ? 'block' : 'none';
-  setAlertType(aeType);
-  setAlertDir(aeDir);
-
-  document.getElementById('alertsListOverlay').classList.remove('visible');
-  document.getElementById('modalOverlay').classList.remove('visible');
-  document.getElementById('alertEditorOverlay').classList.add('visible');
-};
-window.closeAlertEditor = e => {
-  if (e && e.target !== document.getElementById('alertEditorOverlay')) return;
-  document.getElementById('alertEditorOverlay').classList.remove('visible');
-};
-window.setAlertType = t => {
-  aeType = t;
-  document.getElementById('aeTypePrice').classList.toggle('active', t === 'price');
-  document.getElementById('aeTypePercent').classList.toggle('active', t === 'percent');
-  document.getElementById('aeTargetLabel').textContent = t === 'percent' ? 'Änderung in % (seit jetzt)' : 'Zielkurs';
-  document.getElementById('aeTarget').placeholder = t === 'percent' ? 'z.B. 5' : 'z.B. 150.00';
-};
-window.setAlertDir = d => {
-  aeDir = d;
-  document.getElementById('aeDirAbove').classList.toggle('active', d === 'above');
-  document.getElementById('aeDirBelow').classList.toggle('active', d === 'below');
-};
-window.saveAlertEditor = async () => {
-  const val = parseFloat(document.getElementById('aeTarget').value);
-  if (isNaN(val)) { alert('Bitte einen gültigen Wert eingeben.'); return; }
-  if (!currentUser) { alert('Bitte zuerst anmelden.'); return; }
-
-  const baseline = stockData[aeSymCurrent]?.metrics?.close ?? null;
-  await saveAlert({
-    id: aeIdCurrent,
-    symbol: aeSymCurrent,
-    name: ALL_STOCKS[aeSymCurrent]?.name ?? aeSymCurrent,
-    type: aeType,
-    direction: aeDir,
-    target: val,
-    baseline: aeType === 'percent' ? baseline : null,
-    active: true,
-    triggeredAt: null
-  });
-  document.getElementById('alertEditorOverlay').classList.remove('visible');
-};
-window.deleteAlertEditor = async () => {
-  if (!aeIdCurrent) return;
-  await deleteAlert(aeIdCurrent);
-  document.getElementById('alertEditorOverlay').classList.remove('visible');
-};
 </script>
 </body>
 </html>
