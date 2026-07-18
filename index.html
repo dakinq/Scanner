@@ -22,7 +22,7 @@
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
 import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs }
+import { getFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, updateDoc }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 const firebaseConfig = {
@@ -840,6 +840,12 @@ let isLoading    = false;
 // Deploy worker.js to Cloudflare and paste your worker URL here:
 const CF_WORKER_URL = 'https://misty-waterfall-693e.vitalij-bauer-t2.workers.dev';
 
+// ── Push / Price Alerts ────────────────────────────────────────────────────────
+// Öffentlicher VAPID-Key (passend zum privaten Key im Cron-Worker)
+const VAPID_PUBLIC_KEY = 'BG8l6V_8w8V27Jl-JZdqsWSKMhCJZL5fsBormR00YyidfjEbgk-o5gnHoXvaKVeqRR_OTYVIPFHJmXsFSrBW64A';
+let pushAlerts = [];        // aktuell geladene Alarme des Nutzers
+let pushSubActive = false;  // ist dieses Gerät aktuell für Push registriert?
+
 // ── Helpers ──────────────────────────────────────────────────────────────────
 const fmt  = (n,d=2) => n != null ? (+n).toFixed(d) : '-';
 const fmtK = n => {
@@ -886,6 +892,8 @@ onAuthStateChanged(auth, async user => {
     await loadErrorsFromFirestore();
     loadFromFirestore();
     loadFilterFavorites();
+    loadAlerts();
+    refreshPushStatus();
   } else {
     document.getElementById('loginScreen').style.display='flex';
     document.getElementById('appShell').style.display='none';
@@ -941,6 +949,101 @@ async function loadFromFirestore() {
     em.classList.add('visible');
     console.error('loadFromFirestore:', e);
   }
+}
+
+// ── Price Alerts (Firestore) ──────────────────────────────────────────────────
+function getDeviceId() {
+  let id = localStorage.getItem('psDeviceId');
+  if (!id) {
+    id = 'dev_' + Math.random().toString(36).slice(2) + Date.now().toString(36);
+    localStorage.setItem('psDeviceId', id);
+  }
+  return id;
+}
+
+async function loadAlerts() {
+  if (!currentUser) return;
+  try {
+    const snap = await getDocs(collection(db,'users',currentUser.uid,'alerts'));
+    pushAlerts = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+  } catch(e) { console.error('loadAlerts:', e); }
+}
+
+async function saveAlert(alert) {
+  if (!currentUser) return;
+  const id = alert.id || ('al_' + Math.random().toString(36).slice(2) + Date.now().toString(36));
+  const { id: _drop, ...data } = alert;
+  await setDoc(doc(db,'users',currentUser.uid,'alerts',id), { ...data, createdAt: alert.createdAt || Date.now() });
+  await loadAlerts();
+}
+
+async function deleteAlert(id) {
+  if (!currentUser) return;
+  await deleteDoc(doc(db,'users',currentUser.uid,'alerts',id));
+  pushAlerts = pushAlerts.filter(a => a.id !== id);
+}
+
+function alertsForSymbol(sym) {
+  return pushAlerts.filter(a => a.symbol === sym);
+}
+
+// ── Web Push Subscription ─────────────────────────────────────────────────────
+function urlBase64ToUint8Array(base64String) {
+  const padding = '='.repeat((4 - base64String.length % 4) % 4);
+  const base64 = (base64String + padding).replace(/-/g, '+').replace(/_/g, '/');
+  const raw = atob(base64);
+  const arr = new Uint8Array(raw.length);
+  for (let i = 0; i < raw.length; i++) arr[i] = raw.charCodeAt(i);
+  return arr;
+}
+
+async function refreshPushStatus() {
+  try {
+    if (!('serviceWorker' in navigator) || !('PushManager' in window)) { pushSubActive = false; return; }
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    pushSubActive = !!sub;
+  } catch(e) { pushSubActive = false; }
+}
+
+async function enablePush() {
+  if (!currentUser) { alert('Bitte zuerst anmelden.'); return; }
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
+    alert('Push-Benachrichtigungen werden von diesem Browser nicht unterstützt.');
+    return;
+  }
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') { alert('Berechtigung wurde nicht erteilt.'); return; }
+
+  const reg = await navigator.serviceWorker.ready;
+  let sub = await reg.pushManager.getSubscription();
+  if (!sub) {
+    sub = await reg.pushManager.subscribe({
+      userVisibleOnly: true,
+      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+    });
+  }
+  const deviceId = getDeviceId();
+  const json = sub.toJSON();
+  await setDoc(doc(db,'users',currentUser.uid,'pushSubscriptions',deviceId), {
+    endpoint: json.endpoint,
+    keys: json.keys,
+    updatedAt: Date.now()
+  });
+  pushSubActive = true;
+}
+
+async function disablePush() {
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const sub = await reg.pushManager.getSubscription();
+    if (sub) await sub.unsubscribe();
+  } catch(e) { console.error('disablePush unsubscribe:', e); }
+  if (currentUser) {
+    try { await deleteDoc(doc(db,'users',currentUser.uid,'pushSubscriptions',getDeviceId())); }
+    catch(e) { console.error('disablePush firestore:', e); }
+  }
+  pushSubActive = false;
 }
 
 // ── Error Persistence ────────────────────────────────────────────────────────
@@ -2133,6 +2236,8 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
         </button>
         <div class="burger-menu" id="burgerMenu">
           <button onclick="openStockEditor();closeBurgerMenu()">Aktien bearbeiten</button>
+          <button onclick="openPushSettings();closeBurgerMenu()">Push-Benachrichtigungen</button>
+          <button onclick="openAlertsList();closeBurgerMenu()">Meine Alarme</button>
           <button onclick="doLogout()">Abmelden</button>
         </div>
       </div>
@@ -2204,6 +2309,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     <div class="tv-row">
       <a class="tv-btn" id="tvBtn" href="#" rel="noopener">TradingView öffnen</a>
       <button class="tv-edit-btn" onclick="toggleTvEdit()" title="TradingView-Symbol bearbeiten">&#9998;</button>
+      <button class="tv-edit-btn" id="mBellBtn" onclick="openAlertEditor(modalSym)" title="Preisalarm setzen">&#128276;</button>
     </div>
     <div class="tv-edit-row" id="tvEditRow">
       <input class="filter-input" id="tvEditInput" placeholder="z.B. XETR:SAP" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
@@ -2286,10 +2392,203 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
   </div>
 </div>
 
+<!-- Push-Benachrichtigungen -->
+<div class="modal-overlay" id="pushSettingsOverlay" onclick="closePushSettings(event)">
+  <div class="modal-sheet" id="pushSettingsSheet">
+    <div class="modal-handle"></div>
+    <div style="padding:0 14px 24px">
+      <div style="font-size:17px;font-weight:800;margin-bottom:6px">Push-Benachrichtigungen</div>
+      <div style="font-size:12px;color:var(--muted);line-height:1.6;margin-bottom:18px">
+        Aktiviere Push auf diesem Gerät, um Benachrichtigungen zu erhalten, sobald einer deiner Preisalarme ausgelöst wird.
+        Nach einer Neuinstallation der App musst du Push hier erneut aktivieren.
+      </div>
+      <div style="display:flex;align-items:center;justify-content:space-between;background:var(--surf2);border-radius:12px;padding:14px 16px;margin-bottom:16px">
+        <div>
+          <div style="font-size:14px;font-weight:700">Status</div>
+          <div style="font-size:12px;color:var(--muted)" id="pushStatusText">Wird geprüft...</div>
+        </div>
+        <div class="status-dot" id="pushStatusDot"></div>
+      </div>
+      <button class="load-btn" id="pushToggleBtn" onclick="togglePush()">Aktivieren</button>
+    </div>
+  </div>
+</div>
+
+<!-- Meine Alarme -->
+<div class="modal-overlay" id="alertsListOverlay" onclick="closeAlertsList(event)">
+  <div class="modal-sheet" id="alertsListSheet">
+    <div class="modal-handle"></div>
+    <div style="padding:0 14px 24px">
+      <div style="font-size:17px;font-weight:800;margin-bottom:14px">Meine Alarme</div>
+      <div id="alertsListBody"></div>
+    </div>
+  </div>
+</div>
+
+<!-- Alarm erstellen/bearbeiten -->
+<div class="modal-overlay" id="alertEditorOverlay" onclick="closeAlertEditor(event)" style="z-index:300">
+  <div class="modal-sheet" id="alertEditorSheet">
+    <div class="modal-handle"></div>
+    <div style="padding:0 14px 24px">
+      <div style="font-size:17px;font-weight:800;margin-bottom:4px" id="aeTitle">Preisalarm</div>
+      <div style="font-size:12px;color:var(--muted);margin-bottom:16px" id="aeSym"></div>
+
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Art</div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button class="time-chip active" id="aeTypePrice" style="flex:1;text-align:center" onclick="setAlertType('price')">Kurs</button>
+        <button class="time-chip" id="aeTypePercent" style="flex:1;text-align:center" onclick="setAlertType('percent')">% Änderung</button>
+      </div>
+
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Richtung</div>
+      <div style="display:flex;gap:8px;margin-bottom:16px">
+        <button class="time-chip active" id="aeDirAbove" style="flex:1;text-align:center" onclick="setAlertDir('above')">Über</button>
+        <button class="time-chip" id="aeDirBelow" style="flex:1;text-align:center" onclick="setAlertDir('below')">Unter</button>
+      </div>
+
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px" id="aeTargetLabel">Zielkurs</div>
+      <input class="filter-input" id="aeTarget" type="number" step="0.01" placeholder="z.B. 150.00" style="width:100%;margin-bottom:18px" autocomplete="off"/>
+
+      <button class="load-btn" onclick="saveAlertEditor()" style="margin-bottom:10px">Speichern</button>
+      <button id="aeDeleteBtn" onclick="deleteAlertEditor()" style="display:none;width:100%;padding:12px;background:rgba(239,68,68,.15);border:1px solid rgba(239,68,68,.3);border-radius:12px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer">Alarm löschen</button>
+    </div>
+  </div>
+</div>
+
 <script>
 if ('serviceWorker' in navigator) {
   navigator.serviceWorker.register('/sw.js');
 }
+
+// ── Push-Settings UI ──────────────────────────────────────────────────────────
+window.openPushSettings = async () => {
+  document.getElementById('pushSettingsOverlay').classList.add('visible');
+  document.getElementById('pushStatusText').textContent = 'Wird geprüft...';
+  await refreshPushStatus();
+  renderPushStatus();
+};
+window.closePushSettings = e => {
+  if (e && e.target !== document.getElementById('pushSettingsOverlay')) return;
+  document.getElementById('pushSettingsOverlay').classList.remove('visible');
+};
+function renderPushStatus() {
+  const dot = document.getElementById('pushStatusDot');
+  const txt = document.getElementById('pushStatusText');
+  const btn = document.getElementById('pushToggleBtn');
+  if (pushSubActive) {
+    dot.style.background = 'var(--green)';
+    txt.textContent = 'Aktiv auf diesem Gerät';
+    btn.textContent = 'Deaktivieren';
+  } else {
+    dot.style.background = 'var(--muted)';
+    txt.textContent = 'Nicht aktiviert';
+    btn.textContent = 'Aktivieren';
+  }
+}
+window.togglePush = async () => {
+  const btn = document.getElementById('pushToggleBtn');
+  btn.disabled = true;
+  try {
+    if (pushSubActive) await disablePush();
+    else await enablePush();
+  } catch(e) {
+    console.error('togglePush:', e);
+    alert('Fehler: ' + (e.message || e));
+  }
+  btn.disabled = false;
+  renderPushStatus();
+};
+
+// ── Alerts-Liste UI ───────────────────────────────────────────────────────────
+window.openAlertsList = async () => {
+  await loadAlerts();
+  renderAlertsList();
+  document.getElementById('alertsListOverlay').classList.add('visible');
+};
+window.closeAlertsList = e => {
+  if (e && e.target !== document.getElementById('alertsListOverlay')) return;
+  document.getElementById('alertsListOverlay').classList.remove('visible');
+};
+function renderAlertsList() {
+  const body = document.getElementById('alertsListBody');
+  if (!pushAlerts.length) {
+    body.innerHTML = `<div style="color:var(--muted);font-size:13px;padding:20px 0;text-align:center">Noch keine Alarme gesetzt.<br>Öffne eine Aktie und tippe auf die Glocke &#128276;</div>`;
+    return;
+  }
+  body.innerHTML = pushAlerts.map(a => {
+    const nm = ALL_STOCKS[a.symbol]?.name ?? a.symbol;
+    const dirTxt = a.direction === 'above' ? 'über' : 'unter';
+    const valTxt = a.type === 'percent' ? `${a.target}%` : `${fmt(a.target)}`;
+    const triggered = a.triggeredAt ? ' · ausgelöst' : '';
+    return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--surf2);border-radius:12px;padding:12px 14px;margin-bottom:10px;cursor:pointer" onclick="openAlertEditor('${a.symbol}','${a.id}')">
+      <div>
+        <div style="font-size:14px;font-weight:700">${nm} <span style="color:var(--muted);font-weight:500;font-size:12px">(${a.symbol})</span></div>
+        <div style="font-size:12px;color:var(--muted);margin-top:2px">${a.type === 'percent' ? 'Änderung' : 'Kurs'} ${dirTxt} ${valTxt}${triggered}</div>
+      </div>
+      <div style="color:var(--muted);font-size:18px">&#8250;</div>
+    </div>`;
+  }).join('');
+}
+
+// ── Alarm-Editor UI ───────────────────────────────────────────────────────────
+let aeSymCurrent = null, aeIdCurrent = null, aeType = 'price', aeDir = 'above';
+
+window.openAlertEditor = (sym, alertId) => {
+  aeSymCurrent = sym;
+  aeIdCurrent = alertId || null;
+  const existing = alertId ? pushAlerts.find(a => a.id === alertId) : null;
+  aeType = existing?.type || 'price';
+  aeDir  = existing?.direction || 'above';
+
+  document.getElementById('aeSym').textContent = `${ALL_STOCKS[sym]?.name ?? sym} (${sym})`;
+  document.getElementById('aeTarget').value = existing?.target ?? '';
+  document.getElementById('aeDeleteBtn').style.display = existing ? 'block' : 'none';
+  setAlertType(aeType);
+  setAlertDir(aeDir);
+
+  document.getElementById('alertsListOverlay').classList.remove('visible');
+  document.getElementById('modalOverlay').classList.remove('visible');
+  document.getElementById('alertEditorOverlay').classList.add('visible');
+};
+window.closeAlertEditor = e => {
+  if (e && e.target !== document.getElementById('alertEditorOverlay')) return;
+  document.getElementById('alertEditorOverlay').classList.remove('visible');
+};
+window.setAlertType = t => {
+  aeType = t;
+  document.getElementById('aeTypePrice').classList.toggle('active', t === 'price');
+  document.getElementById('aeTypePercent').classList.toggle('active', t === 'percent');
+  document.getElementById('aeTargetLabel').textContent = t === 'percent' ? 'Änderung in % (seit jetzt)' : 'Zielkurs';
+  document.getElementById('aeTarget').placeholder = t === 'percent' ? 'z.B. 5' : 'z.B. 150.00';
+};
+window.setAlertDir = d => {
+  aeDir = d;
+  document.getElementById('aeDirAbove').classList.toggle('active', d === 'above');
+  document.getElementById('aeDirBelow').classList.toggle('active', d === 'below');
+};
+window.saveAlertEditor = async () => {
+  const val = parseFloat(document.getElementById('aeTarget').value);
+  if (isNaN(val)) { alert('Bitte einen gültigen Wert eingeben.'); return; }
+  if (!currentUser) { alert('Bitte zuerst anmelden.'); return; }
+
+  const baseline = stockData[aeSymCurrent]?.metrics?.close ?? null;
+  await saveAlert({
+    id: aeIdCurrent,
+    symbol: aeSymCurrent,
+    name: ALL_STOCKS[aeSymCurrent]?.name ?? aeSymCurrent,
+    type: aeType,
+    direction: aeDir,
+    target: val,
+    baseline: aeType === 'percent' ? baseline : null,
+    active: true,
+    triggeredAt: null
+  });
+  document.getElementById('alertEditorOverlay').classList.remove('visible');
+};
+window.deleteAlertEditor = async () => {
+  if (!aeIdCurrent) return;
+  await deleteAlert(aeIdCurrent);
+  document.getElementById('alertEditorOverlay').classList.remove('visible');
+};
 </script>
 </body>
 </html>
