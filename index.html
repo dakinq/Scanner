@@ -1697,6 +1697,7 @@ function refreshTvBtn() {
 window.openModal = sym => {
   const {name,candles,metrics:m}=stockData[sym];
   modalSym = sym;
+  document.getElementById('mBellBtn').onclick = () => window.openAlertEditor(sym);
   modalCandles = candles;
   modalMonths = 12;
   document.querySelectorAll('.time-chip').forEach((c,i)=>c.classList.toggle('active',i===3));
@@ -2094,7 +2095,7 @@ header{padding-top:calc(4px + env(safe-area-inset-top)) !important}
 .login-btn svg{width:20px;height:20px}
 .login-note{font-size:11px;color:var(--muted);text-align:center;line-height:1.6}
 #appShell{display:none;flex-direction:column;min-height:100vh}
-header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 14px 10px;overflow:hidden}
+header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-filter:blur(16px);-webkit-backdrop-filter:blur(16px);border-bottom:1px solid var(--border);padding:12px 14px 10px;overflow:visible}
 .hrow{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px}
 .logo{font-size:17px;font-weight:800;letter-spacing:-.5px;background:linear-gradient(90deg,var(--accent),var(--cyan));-webkit-background-clip:text;-webkit-text-fill-color:transparent}
 .header-right{display:flex;align-items:center;gap:8px}
@@ -2298,7 +2299,10 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 <div class="modal-overlay" id="modalOverlay" onclick="closeModal(event)">
   <div class="modal-sheet" id="modalSheet">
     <div class="modal-handle"></div>
-    <div class="modal-title" id="mTitle"></div>
+    <div style="display:flex;align-items:center;justify-content:space-between;padding:0 14px 3px">
+      <div class="modal-title" style="padding:0" id="mTitle"></div>
+      <button id="mBellBtn" style="background:none;border:none;font-size:20px;cursor:pointer;padding:4px 2px;line-height:1;color:var(--muted)" title="Preisalarm setzen">&#128276;</button>
+    </div>
     <div class="modal-sym" id="mSym"></div>
     <div class="time-chips">
       <div class="time-chip" onclick="setModalRange(1,this)">1M</div>
@@ -2309,7 +2313,6 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     <div class="tv-row">
       <a class="tv-btn" id="tvBtn" href="#" rel="noopener">TradingView öffnen</a>
       <button class="tv-edit-btn" onclick="toggleTvEdit()" title="TradingView-Symbol bearbeiten">&#9998;</button>
-      <button class="tv-edit-btn" id="mBellBtn" onclick="openAlertEditor(modalSym)" title="Preisalarm setzen">&#128276;</button>
     </div>
     <div class="tv-edit-row" id="tvEditRow">
       <input class="filter-input" id="tvEditInput" placeholder="z.B. XETR:SAP" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
