@@ -1014,27 +1014,41 @@ async function refreshPushStatus() {
 async function enablePush() {
   if (!currentUser) { alert('Bitte zuerst anmelden.'); return; }
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    alert('Push-Benachrichtigungen werden von diesem Browser nicht unterstützt.');
+    alert('Push wird von diesem Browser/Kontext nicht unterstützt.\niOS: App muss vom Home-Bildschirm geöffnet sein.');
     return;
   }
   const perm = await Notification.requestPermission();
-  if (perm !== 'granted') { alert('Berechtigung wurde nicht erteilt.'); return; }
+  if (perm !== 'granted') { alert('Berechtigung verweigert: ' + perm); return; }
 
-  const reg = await navigator.serviceWorker.ready;
-  let sub = await reg.pushManager.getSubscription();
-  if (!sub) {
-    sub = await reg.pushManager.subscribe({
-      userVisibleOnly: true,
-      applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+  let reg;
+  try {
+    reg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Service Worker antwortet nicht (Timeout). Prüfe ob sw.js erreichbar ist.')), 6000))
+    ]);
+  } catch(e) { alert('SW Fehler: ' + e.message); return; }
+
+  let sub;
+  try {
+    sub = await reg.pushManager.getSubscription();
+    if (!sub) {
+      sub = await reg.pushManager.subscribe({
+        userVisibleOnly: true,
+        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
+      });
+    }
+  } catch(e) { alert('Subscribe Fehler: ' + e.message); return; }
+
+  try {
+    const deviceId = getDeviceId();
+    const json = sub.toJSON();
+    await setDoc(doc(db,'users',currentUser.uid,'pushSubscriptions',deviceId), {
+      endpoint: json.endpoint,
+      keys: json.keys,
+      updatedAt: Date.now()
     });
-  }
-  const deviceId = getDeviceId();
-  const json = sub.toJSON();
-  await setDoc(doc(db,'users',currentUser.uid,'pushSubscriptions',deviceId), {
-    endpoint: json.endpoint,
-    keys: json.keys,
-    updatedAt: Date.now()
-  });
+  } catch(e) { alert('Firestore Fehler: ' + e.message); return; }
+
   pushSubActive = true;
 }
 
@@ -2621,7 +2635,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 
 <script>
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('/sw.js');
+  navigator.serviceWorker.register('./sw.js');
 }
 </script>
 </body>
