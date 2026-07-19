@@ -1296,9 +1296,10 @@ window.loadAllData = async () => {
   idxFilter.forEach(idx=>STOCKS[idx].forEach(({s})=>{ if(!toLoad.includes(s)) toLoad.push(s); }));
 
   const errors=[];
+
   // Alle bisherigen Fehler sofort löschen – frischer Start
   seLastErrors = [];
-  saveErrorsToFirestore([]);
+  saveErrorsToFirestore([]).catch(()=>{});
   seUpdateErrorBtn();
   document.getElementById('errorMsg').classList.remove('visible');
 
@@ -1306,45 +1307,52 @@ window.loadAllData = async () => {
   const needsLoad = toLoad.filter(s => needsUpdate(s));
   const total = toLoad.length;
 
-  // ── Phase 1: Fundamentaldaten per Batch (10 Symbols pro Request) ──────────
-  const FUND_BATCH = 10;
-  const fundamentalsMap = {};
-  for(let i=0; i<needsLoad.length; i+=FUND_BATCH) {
-    const chunk = needsLoad.slice(i, i+FUND_BATCH);
-    updateProgress(i, total, `Fundamentals ${i+1}–${Math.min(i+FUND_BATCH,needsLoad.length)} von ${needsLoad.length}`);
-    const result = await fetchFundamentals(chunk);
-    Object.assign(fundamentalsMap, result);
-    await new Promise(r=>setTimeout(r,200));
-  }
-
-  // ── Phase 2: Candle-Daten (3 parallel, um Yahoo nicht zu überlasten) ──────
-  const CANDLE_BATCH = 3;
-  let loaded = 0;
-  for(let i=0; i<needsLoad.length; i+=CANDLE_BATCH) {
-    const chunk = needsLoad.slice(i, i+CANDLE_BATCH);
-    updateProgress(i, total, `Kursdaten ${i+1}–${Math.min(i+CANDLE_BATCH,needsLoad.length)} von ${needsLoad.length} (${total} gesamt)`);
-    await Promise.all(chunk.map(async sym=>{
+  try {
+    // ── Phase 1: Fundamentaldaten per Batch (10 Symbols pro Request) ──────────
+    const FUND_BATCH = 10;
+    const fundamentalsMap = {};
+    for(let i=0; i<needsLoad.length; i+=FUND_BATCH) {
+      const chunk = needsLoad.slice(i, i+FUND_BATCH);
+      updateProgress(i, total, `Fundamentals ${i+1}–${Math.min(i+FUND_BATCH,needsLoad.length)} von ${needsLoad.length}`);
       try {
-        // Backfill: wenn ältere Daten fehlen, vollen 2-Jahres-Zeitraum laden
-        const days = needsBackfill(sym) ? CANDLE_DAYS : Math.min(missingDays(sym)+5, CANDLE_DAYS);
-        const fresh = await fetchCandles(sym, days);
-        const candles = mergeCandles(stockData[sym]?.candles, fresh);
-        const metrics = computeMetrics(candles);
-        const info = ALL_STOCKS[sym] ?? {name:sym, indices:[]};
-        const fund = fundamentalsMap[sym] ?? stockData[sym]?.fundamentals ?? {};
-        stockData[sym] = {
-          candles, metrics, fundamentals: fund,
-          name: fund.longName || info.name,
-          indices: info.indices,
-          lastUpdated: Date.now()
-        };
-        saveToFirestore(sym, candles, metrics, fund).catch(e=>{
-          console.error(`Firestore save failed [${sym}]:`, e.code||e.message);
-          errors.push(`${sym}(DB)`);
-        });
-      } catch(e){ errors.push(sym); }
-    }));
-    await new Promise(r=>setTimeout(r,350));
+        const result = await fetchFundamentals(chunk);
+        Object.assign(fundamentalsMap, result);
+      } catch(e) { console.warn('Fundamentals batch failed:', e.message); }
+      await new Promise(r=>setTimeout(r,200));
+    }
+
+    // ── Phase 2: Candle-Daten (3 parallel, um Yahoo nicht zu überlasten) ──────
+    const CANDLE_BATCH = 3;
+    for(let i=0; i<needsLoad.length; i+=CANDLE_BATCH) {
+      const chunk = needsLoad.slice(i, i+CANDLE_BATCH);
+      updateProgress(i, total, `Kursdaten ${i+1}–${Math.min(i+CANDLE_BATCH,needsLoad.length)} von ${needsLoad.length} (${total} gesamt)`);
+      await Promise.all(chunk.map(async sym=>{
+        try {
+          const days = needsBackfill(sym) ? CANDLE_DAYS : Math.min(missingDays(sym)+5, CANDLE_DAYS);
+          const fresh = await fetchCandles(sym, days);
+          const candles = mergeCandles(stockData[sym]?.candles, fresh);
+          const metrics = computeMetrics(candles);
+          const info = ALL_STOCKS[sym] ?? {name:sym, indices:[]};
+          const fund = fundamentalsMap[sym] ?? stockData[sym]?.fundamentals ?? {};
+          stockData[sym] = {
+            candles, metrics, fundamentals: fund,
+            name: fund.longName || info.name,
+            indices: info.indices,
+            lastUpdated: Date.now()
+          };
+          saveToFirestore(sym, candles, metrics, fund).catch(e=>{
+            console.error(`Firestore save failed [${sym}]:`, e.code||e.message);
+            errors.push(`${sym}(DB)`);
+          });
+        } catch(e) {
+          console.warn(`Failed [${sym}]:`, e.message);
+          errors.push(sym);
+        }
+      }));
+      await new Promise(r=>setTimeout(r,350));
+    }
+  } catch(fatalErr) {
+    console.error('loadAllData fatal error:', fatalErr);
   }
 
   showProgress(false);
