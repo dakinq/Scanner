@@ -20,14 +20,14 @@
 <script src="https://unpkg.com/lightweight-charts@4.1.3/dist/lightweight-charts.standalone.production.js"></script>
 <script type="module">
 import { initializeApp } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getAuth, signInWithPopup, signInWithRedirect, getRedirectResult, GoogleAuthProvider, signOut, onAuthStateChanged }
+import { getAuth, signInWithPopup, GoogleAuthProvider, signOut, onAuthStateChanged }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
 import { getFirestore, doc, setDoc, getDoc, deleteDoc, collection, getDocs, updateDoc }
   from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 const firebaseConfig = {
   apiKey: "AIzaSyA3nNCGuca7G8S-0IiAem0vZcPrMUv4EB8",
-  authDomain: "scanner-ebfec.firebaseapp.com",
+  authDomain: "dakinq.github.io",
   projectId: "scanner-ebfec",
   storageBucket: "scanner-ebfec.firebasestorage.app",
   messagingSenderId: "616584880907",
@@ -884,22 +884,6 @@ function computeMetrics(candles) {
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
-
-// Detect iOS PWA (standalone mode) – popups are blocked there
-const _isIOSPWA = (
-  /iphone|ipad|ipod/i.test(navigator.userAgent) &&
-  (window.navigator.standalone === true ||
-   window.matchMedia('(display-mode: standalone)').matches)
-);
-
-// After a redirect-based login, Firebase returns the result on the next page load.
-// We call getRedirectResult() once at startup so the login completes silently.
-getRedirectResult(auth).catch(e => {
-  if (e && e.code !== 'auth/no-current-user') {
-    alert('Login fehlgeschlagen: ' + e.message);
-  }
-});
-
 onAuthStateChanged(auth, async user => {
   currentUser = user;
   if (user) {
@@ -918,18 +902,8 @@ onAuthStateChanged(auth, async user => {
 });
 
 window.doLogin = async () => {
-  try {
-    const provider = new GoogleAuthProvider();
-    if (_isIOSPWA) {
-      // Redirect flow: leaves the PWA, completes Google login in Safari,
-      // then returns – getRedirectResult() above picks up the result.
-      await signInWithRedirect(auth, provider);
-    } else {
-      await signInWithPopup(auth, provider);
-    }
-  } catch(e) {
-    alert('Login fehlgeschlagen: ' + e.message);
-  }
+  try { await signInWithPopup(auth, new GoogleAuthProvider()); }
+  catch(e) { alert('Login fehlgeschlagen: '+e.message); }
 };
 window.doLogout = () => signOut(auth);
 

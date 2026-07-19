@@ -11,26 +11,7 @@ self.addEventListener('activate', e => {
   self.clients.claim();
 });
 
-// URLs die der Service Worker NIEMALS anfassen darf
-const BYPASS_URLS = [
-  'accounts.google.com',
-  'googleapis.com',
-  'gstatic.com',
-  'firebaseapp.com',
-  'firebase.googleapis.com',
-  'identitytoolkit.googleapis.com',
-  'securetoken.googleapis.com',
-];
-
 self.addEventListener('fetch', e => {
-  const url = e.request.url;
-
-  // Google Auth & Firebase: immer direkt ans Netz, nie cachen/intercepten
-  if (BYPASS_URLS.some(domain => url.includes(domain))) {
-    e.respondWith(fetch(e.request));
-    return;
-  }
-
   e.respondWith(
     fetch(e.request).catch(() => caches.match(e.request))
   );
