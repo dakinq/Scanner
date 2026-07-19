@@ -1047,11 +1047,32 @@ async function enablePush() {
   pushLog('Warte auf Service Worker ready…');
   let reg;
   try {
-    reg = await Promise.race([
-      navigator.serviceWorker.ready,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout nach 6s')), 6000))
-    ]);
-    pushLog('✓ SW aktiv: ' + reg.active?.scriptURL, '#22c55e');
+    // Direkt registrieren und auf Aktivierung warten – zuverlässiger als navigator.serviceWorker.ready
+    reg = await navigator.serviceWorker.register('./sw.js');
+
+    // Falls der SW noch installing oder waiting ist, warten bis er active wird
+    if (!reg.active) {
+      await new Promise((resolve, reject) => {
+        const timeout = setTimeout(() => reject(new Error('Timeout nach 12s – bitte App neu starten')), 12000);
+        const sw = reg.installing || reg.waiting;
+        if (!sw) { clearTimeout(timeout); resolve(); return; }
+        sw.addEventListener('statechange', function handler(e) {
+          if (e.target.state === 'activated' || e.target.state === 'active') {
+            clearTimeout(timeout);
+            sw.removeEventListener('statechange', handler);
+            resolve();
+          }
+          if (e.target.state === 'redundant') {
+            clearTimeout(timeout);
+            sw.removeEventListener('statechange', handler);
+            reject(new Error('SW wurde als redundant markiert'));
+          }
+        });
+      });
+      // reg neu lesen nach Aktivierung
+      reg = await navigator.serviceWorker.getRegistration('./sw.js') || reg;
+    }
+    pushLog('✓ SW aktiv: ' + (reg.active?.scriptURL || 'ok'), '#22c55e');
   } catch(e) { pushLog('❌ SW Fehler: ' + e.message, '#ef4444'); return; }
 
   pushLog('Erstelle Push-Subscription…');
@@ -2664,7 +2685,20 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 
 <script>
 if ('serviceWorker' in navigator) {
-  navigator.serviceWorker.register('./sw.js');
+  navigator.serviceWorker.register('./sw.js')
+    .then(reg => {
+      // Wenn ein neuer SW wartet (Update), sofort aktivieren
+      if (reg.waiting) reg.waiting.postMessage({ type: 'SKIP_WAITING' });
+      reg.addEventListener('updatefound', () => {
+        const newSW = reg.installing;
+        if (newSW) newSW.addEventListener('statechange', () => {
+          if (newSW.state === 'installed' && navigator.serviceWorker.controller) {
+            newSW.postMessage({ type: 'SKIP_WAITING' });
+          }
+        });
+      });
+    })
+    .catch(err => console.error('SW Registrierung fehlgeschlagen:', err));
 }
 </script>
 </body>
