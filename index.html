@@ -1166,18 +1166,33 @@ const CANDLE_DAYS = 730; // 2 Jahre für saubere 200-Tage-Linie
 function missingDays(sym) {
   const d = stockData[sym];
   if (!d?.candles?.length) return CANDLE_DAYS;
+  const cutoff = Math.floor(Date.now()/1000) - CANDLE_DAYS*86400;
+  const oldestStored = d.candles[0].time;
+  // Wenn älteste gespeicherte Kerze jünger als cutoff → müssen ältere Daten nachgeladen werden
+  if (oldestStored > cutoff + 7*86400) {
+    // Wie viele Tage fehlen nach hinten?
+    return Math.ceil((Date.now()/1000 - oldestStored) / 86400) + CANDLE_DAYS - Math.ceil((Date.now()/1000 - cutoff) / 86400) + 5;
+  }
+  // Nur neue Kerzen vorne nachladen
   return Math.ceil((Date.now()-d.candles[d.candles.length-1].time*1000)/86400000)+2;
+}
+function needsBackfill(sym) {
+  const d = stockData[sym];
+  if (!d?.candles?.length) return false;
+  const cutoff = Math.floor(Date.now()/1000) - CANDLE_DAYS*86400;
+  return d.candles[0].time > cutoff + 7*86400; // mehr als 1 Woche Geschichte fehlt
 }
 function mergeCandles(existing, fresh) {
   if (!existing?.length) return fresh;
   const cutoff = Math.floor(Date.now()/1000) - CANDLE_DAYS*86400;
-  // Den letzten gespeicherten Tag immer verwerfen und durch frische Daten ersetzen
-  // (letzter Tag kann unfertig sein – egal ob heute oder gestern nach Börsenschluss)
   const lastT = existing[existing.length-1].time;
-  return [
-    ...existing.filter(c => c.time < lastT),  // alle Kerzen außer der letzten
-    ...fresh.filter(c => c.time >= lastT)      // letzte + neue Kerzen immer frisch
-  ].filter(c => c.time > cutoff);
+  // Alte + neue Kerzen zusammenführen, Duplikate per time-key deduplizieren
+  const map = new Map();
+  existing.forEach(c => map.set(c.time, c));
+  fresh.forEach(c => map.set(c.time, c)); // frische Daten überschreiben (letzter Tag aktuell)
+  return [...map.values()]
+    .filter(c => c.time > cutoff)
+    .sort((a,b) => a.time - b.time);
 }
 
 async function fetchCandles(symbol, days=CANDLE_DAYS) {
@@ -1281,15 +1296,22 @@ window.loadAllData = async () => {
   idxFilter.forEach(idx=>STOCKS[idx].forEach(({s})=>{ if(!toLoad.includes(s)) toLoad.push(s); }));
 
   const errors=[];
+  // Alle bisherigen Fehler sofort löschen – frischer Start
+  seLastErrors = [];
+  saveErrorsToFirestore([]);
+  seUpdateErrorBtn();
+  document.getElementById('errorMsg').classList.remove('visible');
+
   // Nur Symbols die ein Update brauchen
   const needsLoad = toLoad.filter(s => needsUpdate(s));
+  const total = toLoad.length;
 
   // ── Phase 1: Fundamentaldaten per Batch (10 Symbols pro Request) ──────────
   const FUND_BATCH = 10;
   const fundamentalsMap = {};
   for(let i=0; i<needsLoad.length; i+=FUND_BATCH) {
     const chunk = needsLoad.slice(i, i+FUND_BATCH);
-    updateProgress(i, needsLoad.length, `Fundamentals ${i+1}-${Math.min(i+FUND_BATCH,needsLoad.length)} von ${needsLoad.length}`);
+    updateProgress(i, total, `Fundamentals ${i+1}–${Math.min(i+FUND_BATCH,needsLoad.length)} von ${needsLoad.length}`);
     const result = await fetchFundamentals(chunk);
     Object.assign(fundamentalsMap, result);
     await new Promise(r=>setTimeout(r,200));
@@ -1297,18 +1319,19 @@ window.loadAllData = async () => {
 
   // ── Phase 2: Candle-Daten (3 parallel, um Yahoo nicht zu überlasten) ──────
   const CANDLE_BATCH = 3;
+  let loaded = 0;
   for(let i=0; i<needsLoad.length; i+=CANDLE_BATCH) {
     const chunk = needsLoad.slice(i, i+CANDLE_BATCH);
-    updateProgress(i, needsLoad.length, `Kursdaten ${i+1}-${Math.min(i+CANDLE_BATCH,needsLoad.length)} von ${needsLoad.length}`);
+    updateProgress(i, total, `Kursdaten ${i+1}–${Math.min(i+CANDLE_BATCH,needsLoad.length)} von ${needsLoad.length} (${total} gesamt)`);
     await Promise.all(chunk.map(async sym=>{
       try {
-        const days = Math.min(missingDays(sym)+5, CANDLE_DAYS);
+        // Backfill: wenn ältere Daten fehlen, vollen 2-Jahres-Zeitraum laden
+        const days = needsBackfill(sym) ? CANDLE_DAYS : Math.min(missingDays(sym)+5, CANDLE_DAYS);
         const fresh = await fetchCandles(sym, days);
         const candles = mergeCandles(stockData[sym]?.candles, fresh);
         const metrics = computeMetrics(candles);
         const info = ALL_STOCKS[sym] ?? {name:sym, indices:[]};
-        // Fundamentaldaten zusammenführen
-        const fund = fundamentalsMap[sym] ?? {};
+        const fund = fundamentalsMap[sym] ?? stockData[sym]?.fundamentals ?? {};
         stockData[sym] = {
           candles, metrics, fundamentals: fund,
           name: fund.longName || info.name,
@@ -1319,7 +1342,6 @@ window.loadAllData = async () => {
           console.error(`Firestore save failed [${sym}]:`, e.code||e.message);
           errors.push(`${sym}(DB)`);
         });
-        clearErrorInFirestore(sym);
       } catch(e){ errors.push(sym); }
     }));
     await new Promise(r=>setTimeout(r,350));
@@ -1872,7 +1894,7 @@ window.openModal = sym => {
   document.getElementById('mBellBtn').onclick = () => window.openAlertEditor(sym);
   modalCandles = candles;
   modalMonths = 12;
-  document.querySelectorAll('.time-chip').forEach((c,i)=>c.classList.toggle('active',i===3));
+  document.querySelectorAll('.time-chip').forEach((c,i)=>c.classList.toggle('active',i===3)); // 1J = index 3
   document.getElementById('mTitle').textContent=name;
   document.getElementById('mSym').textContent=sym;
   document.getElementById('tvEditRow').style.display='none';
@@ -2653,6 +2675,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
       <div class="time-chip" onclick="setModalRange(3,this)">3M</div>
       <div class="time-chip" onclick="setModalRange(6,this)">6M</div>
       <div class="time-chip active" onclick="setModalRange(12,this)">1J</div>
+      <div class="time-chip" onclick="setModalRange(24,this)">2J</div>
     </div>
     <div class="tv-row">
       <a class="tv-btn" id="tvBtn" href="#" rel="noopener">TradingView öffnen</a>
