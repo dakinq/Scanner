@@ -908,13 +908,14 @@ window.doLogin = async () => {
 window.doLogout = () => signOut(auth);
 
 // ── Firestore ─────────────────────────────────────────────────────────────────
-async function saveToFirestore(symbol, candles, metrics) {
+async function saveToFirestore(symbol, candles, metrics, fundamentals={}) {
   if (!currentUser) return;
   await setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), {
-    name: ALL_STOCKS[symbol]?.name ?? symbol,
+    name: fundamentals?.longName || ALL_STOCKS[symbol]?.name || symbol,
     indices: ALL_STOCKS[symbol]?.indices ?? [],
     lastUpdated: Date.now(),
     metrics,
+    fundamentals,
     candles: JSON.stringify(candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume]))
   });
 }
@@ -929,7 +930,9 @@ async function loadFromFirestore() {
       stockData[d.id] = {
         name: raw.name, indices: raw.indices||[],
         candles: JSON.parse(raw.candles||'[]').map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]})),
-        metrics: raw.metrics, lastUpdated: raw.lastUpdated
+        metrics: raw.metrics,
+        fundamentals: raw.fundamentals || {},
+        lastUpdated: raw.lastUpdated
       };
     });
     const n = Object.keys(stockData).length;
@@ -1158,23 +1161,30 @@ function needsUpdate(sym) {
   if (!d?.lastUpdated) return true;
   return (Date.now()-d.lastUpdated)/3600000 > 6;
 }
+const CANDLE_DAYS = 730; // 2 Jahre für saubere 200-Tage-Linie
+
 function missingDays(sym) {
   const d = stockData[sym];
-  if (!d?.candles?.length) return 365;
+  if (!d?.candles?.length) return CANDLE_DAYS;
   return Math.ceil((Date.now()-d.candles[d.candles.length-1].time*1000)/86400000)+2;
 }
 function mergeCandles(existing, fresh) {
   if (!existing?.length) return fresh;
+  const cutoff = Math.floor(Date.now()/1000) - CANDLE_DAYS*86400;
+  // Den letzten gespeicherten Tag immer verwerfen und durch frische Daten ersetzen
+  // (letzter Tag kann unfertig sein – egal ob heute oder gestern nach Börsenschluss)
   const lastT = existing[existing.length-1].time;
-  const cutoff = Math.floor(Date.now()/1000)-366*86400;
-  return [...existing,...fresh.filter(c=>c.time>lastT)].filter(c=>c.time>cutoff);
+  return [
+    ...existing.filter(c => c.time < lastT),  // alle Kerzen außer der letzten
+    ...fresh.filter(c => c.time >= lastT)      // letzte + neue Kerzen immer frisch
+  ].filter(c => c.time > cutoff);
 }
 
-async function fetchCandles(symbol, days=365) {
+async function fetchCandles(symbol, days=CANDLE_DAYS) {
   const end=Math.floor(Date.now()/1000), start=end-days*86400;
   const yahooUrl=`https://query1.finance.yahoo.com/v8/finance/chart/${symbol}?interval=1d&period1=${start}&period2=${end}`;
   const res = await fetch(`${CF_WORKER_URL}?url=${encodeURIComponent(yahooUrl)}`, {
-    signal: AbortSignal.timeout(15000)
+    signal: AbortSignal.timeout(20000)
   });
   if (!res.ok) throw new Error(`Worker HTTP ${res.status}`);
   const json = await res.json();
@@ -1186,6 +1196,77 @@ async function fetchCandles(symbol, days=365) {
     .filter(c=>c.open&&c.high&&c.low&&c.close);
   if (!candles.length) throw new Error('Leere Candles');
   return candles;
+}
+
+// ── Batch Fundamentaldaten (bis zu 10 Symbols pro Request) ───────────────────
+async function fetchFundamentals(symbols) {
+  const syms = symbols.join(',');
+  const fields = [
+    'regularMarketPrice','regularMarketChange','regularMarketChangePercent',
+    'regularMarketVolume','averageDailyVolume3Month','marketCap',
+    'fiftyTwoWeekHigh','fiftyTwoWeekLow','fiftyDayAverage','twoHundredDayAverage',
+    'trailingPE','forwardPE','priceToBook','pegRatio','enterpriseToRevenue','enterpriseToEbitda',
+    'trailingEps','forwardEps','dividendYield','dividendRate',
+    'beta','shortRatio','profitMargins','revenueGrowth','earningsGrowth',
+    'freeCashflow','totalDebt','totalCash','returnOnEquity','returnOnAssets',
+    'targetMeanPrice','recommendationKey','numberOfAnalystOpinions',
+    'sector','industry','longName','earningsTimestamp'
+  ].join(',');
+  const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(syms)}&fields=${fields}`;
+  try {
+    const res = await fetch(`${CF_WORKER_URL}?url=${encodeURIComponent(quoteUrl)}`, {
+      signal: AbortSignal.timeout(15000)
+    });
+    if (!res.ok) return {};
+    const json = await res.json();
+    const quotes = json?.quoteResponse?.result ?? [];
+    const out = {};
+    quotes.forEach(q => {
+      out[q.symbol] = {
+        regularMarketPrice:         q.regularMarketPrice,
+        regularMarketChange:        q.regularMarketChange,
+        regularMarketChangePct:     q.regularMarketChangePercent,
+        regularMarketVolume:        q.regularMarketVolume,
+        avgVolume3m:                q.averageDailyVolume3Month,
+        marketCap:                  q.marketCap,
+        high52w:                    q.fiftyTwoWeekHigh,
+        low52w:                     q.fiftyTwoWeekLow,
+        ma50Yahoo:                  q.fiftyDayAverage,
+        ma200Yahoo:                 q.twoHundredDayAverage,
+        trailingPE:                 q.trailingPE,
+        forwardPE:                  q.forwardPE,
+        priceToBook:                q.priceToBook,
+        pegRatio:                   q.pegRatio,
+        evToRevenue:                q.enterpriseToRevenue,
+        evToEbitda:                 q.enterpriseToEbitda,
+        trailingEps:                q.trailingEps,
+        forwardEps:                 q.forwardEps,
+        dividendYield:              q.dividendYield,
+        dividendRate:               q.dividendRate,
+        beta:                       q.beta,
+        shortRatio:                 q.shortRatio,
+        profitMargins:              q.profitMargins,
+        revenueGrowth:              q.revenueGrowth,
+        earningsGrowth:             q.earningsGrowth,
+        freeCashflow:               q.freeCashflow,
+        totalDebt:                  q.totalDebt,
+        totalCash:                  q.totalCash,
+        returnOnEquity:             q.returnOnEquity,
+        returnOnAssets:             q.returnOnAssets,
+        targetMeanPrice:            q.targetMeanPrice,
+        recommendationKey:          q.recommendationKey,
+        numAnalysts:                q.numberOfAnalystOpinions,
+        sector:                     q.sector,
+        industry:                   q.industry,
+        longName:                   q.longName,
+        earningsTimestamp:          q.earningsTimestamp,
+      };
+    });
+    return out;
+  } catch(e) {
+    console.warn('fetchFundamentals failed:', e.message);
+    return {};
+  }
 }
 
 // ── Main Load ─────────────────────────────────────────────────────────────────
@@ -1200,25 +1281,44 @@ window.loadAllData = async () => {
   idxFilter.forEach(idx=>STOCKS[idx].forEach(({s})=>{ if(!toLoad.includes(s)) toLoad.push(s); }));
 
   const errors=[];
-  const BATCH=3;
-  for(let i=0;i<toLoad.length;i+=BATCH) {
-    const chunk=toLoad.slice(i,i+BATCH);
-    updateProgress(i,toLoad.length,`${i+1}-${Math.min(i+BATCH,toLoad.length)} von ${toLoad.length}`);
+  // Nur Symbols die ein Update brauchen
+  const needsLoad = toLoad.filter(s => needsUpdate(s));
+
+  // ── Phase 1: Fundamentaldaten per Batch (10 Symbols pro Request) ──────────
+  const FUND_BATCH = 10;
+  const fundamentalsMap = {};
+  for(let i=0; i<needsLoad.length; i+=FUND_BATCH) {
+    const chunk = needsLoad.slice(i, i+FUND_BATCH);
+    updateProgress(i, needsLoad.length, `Fundamentals ${i+1}-${Math.min(i+FUND_BATCH,needsLoad.length)} von ${needsLoad.length}`);
+    const result = await fetchFundamentals(chunk);
+    Object.assign(fundamentalsMap, result);
+    await new Promise(r=>setTimeout(r,200));
+  }
+
+  // ── Phase 2: Candle-Daten (3 parallel, um Yahoo nicht zu überlasten) ──────
+  const CANDLE_BATCH = 3;
+  for(let i=0; i<needsLoad.length; i+=CANDLE_BATCH) {
+    const chunk = needsLoad.slice(i, i+CANDLE_BATCH);
+    updateProgress(i, needsLoad.length, `Kursdaten ${i+1}-${Math.min(i+CANDLE_BATCH,needsLoad.length)} von ${needsLoad.length}`);
     await Promise.all(chunk.map(async sym=>{
-      if(!needsUpdate(sym)) return;
       try {
-        const days=Math.min(missingDays(sym)+5,365);
-        const fresh=await fetchCandles(sym,days);
-        const candles=mergeCandles(stockData[sym]?.candles,fresh);
-        const metrics=computeMetrics(candles);
-        const info=ALL_STOCKS[sym]??{name:sym,indices:[]};
-        stockData[sym]={candles,metrics,name:info.name,indices:info.indices,lastUpdated:Date.now()};
-        // Save to Firestore async - don't block or fail the UI
-        saveToFirestore(sym,candles,metrics).catch(e=>{
+        const days = Math.min(missingDays(sym)+5, CANDLE_DAYS);
+        const fresh = await fetchCandles(sym, days);
+        const candles = mergeCandles(stockData[sym]?.candles, fresh);
+        const metrics = computeMetrics(candles);
+        const info = ALL_STOCKS[sym] ?? {name:sym, indices:[]};
+        // Fundamentaldaten zusammenführen
+        const fund = fundamentalsMap[sym] ?? {};
+        stockData[sym] = {
+          candles, metrics, fundamentals: fund,
+          name: fund.longName || info.name,
+          indices: info.indices,
+          lastUpdated: Date.now()
+        };
+        saveToFirestore(sym, candles, metrics, fund).catch(e=>{
           console.error(`Firestore save failed [${sym}]:`, e.code||e.message);
           errors.push(`${sym}(DB)`);
         });
-        // Symbol erfolgreich geladen → Fehlermarkierung entfernen
         clearErrorInFirestore(sym);
       } catch(e){ errors.push(sym); }
     }));
@@ -1560,7 +1660,11 @@ window.sortResults = val => {
   const desc=val.endsWith('_desc');
   const field=val.replace('_desc','').replace('_asc','');
   filteredSyms.sort((a,b)=>{
-    if(field==='name') return stockData[a].name.localeCompare(stockData[b].name);
+    if(field==='name'){
+      const na=(stockData[a]?.name||a).toLowerCase();
+      const nb=(stockData[b]?.name||b).toLowerCase();
+      return na.localeCompare(nb,undefined,{sensitivity:'base'})*(desc?-1:1);
+    }
     const va = (stockData[a].metrics??{})[field] ?? 0;
     const vb = (stockData[b].metrics??{})[field] ?? 0;
     return (va - vb) * (desc?-1:1);
@@ -2123,6 +2227,12 @@ window.seConfirmEdit = async () => {
     if (!ALL_STOCKS[newSym]) ALL_STOCKS[newSym]={name:newName,indices:inds};
     else ALL_STOCKS[newSym].name=newName;
   }
+  // Alten Ticker sofort aus Fehlerliste entfernen – er kann nie mehr Daten bekommen
+  if (seLastErrors.includes(origSym)) {
+    seLastErrors = seLastErrors.filter(s => s !== origSym);
+    await saveErrorsToFirestore(seLastErrors);
+    seUpdateErrorBtn();
+  }
   document.getElementById('seEditOverlay').classList.remove('visible');
   seRenderList();
   await seUpdateInFirestore(idx,origSym,newSym,newName);
@@ -2136,6 +2246,12 @@ window.seDeleteStock = async () => {
     ALL_STOCKS[origSym].indices = ALL_STOCKS[origSym].indices.filter(i=>i!==idx);
     if (!ALL_STOCKS[origSym].indices.length) delete ALL_STOCKS[origSym];
   }
+  // Gelöschten Ticker sofort aus Fehlerliste entfernen
+  if (seLastErrors.includes(origSym)) {
+    seLastErrors = seLastErrors.filter(s => s !== origSym);
+    await saveErrorsToFirestore(seLastErrors);
+    seUpdateErrorBtn();
+  }
   document.getElementById('seEditOverlay').classList.remove('visible');
   seRenderList();
   await seDeleteFromFirestore(idx,origSym);
@@ -2148,6 +2264,9 @@ function seSetErrors(errs) {
   // Symbole die nicht mehr in ANY Index existieren entfernen
   const allSyms = new Set(Object.keys(ALL_STOCKS));
   seLastErrors = seLastErrors.filter(s => allSyms.has(s));
+  // Symbole die jetzt erfolgreich Daten haben aus Fehlerliste entfernen
+  // (egal ob gerade geladen oder schon in stockData vorhanden)
+  seLastErrors = seLastErrors.filter(s => !stockData[s]?.candles?.length || newErrs.includes(s));
   seUpdateErrorBtn();
   seRenderList();
   saveErrorsToFirestore(seLastErrors);
