@@ -1,9 +1,8 @@
-const CACHE = 'stock-scanner-v2';
-const ASSETS = ['/', '/index.html', '/manifest.json'];
+const CACHE = 'stock-scanner-v3';
 
 self.addEventListener('install', e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
-  // Sofort aktivieren – nicht auf alte Clients warten
+  // Kein Pre-Caching – GitHub Pages Pfade sind nicht vorhersehbar
+  // skipWaiting sorgt dafür dass der SW sofort aktiv wird
   self.skipWaiting();
 });
 
@@ -11,11 +10,10 @@ self.addEventListener('activate', e => {
   e.waitUntil(
     caches.keys()
       .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
-      .then(() => self.clients.claim()) // Alle offenen Tabs sofort übernehmen
+      .then(() => self.clients.claim())
   );
 });
 
-// Nachrichten vom Hauptthread (z.B. manuelles skipWaiting)
 self.addEventListener('message', e => {
   if (e.data?.type === 'SKIP_WAITING') self.skipWaiting();
 });
