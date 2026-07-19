@@ -839,6 +839,7 @@ let isLoading    = false;
 // ── Cloudflare Worker Proxy ───────────────────────────────────────────────────
 // Deploy worker.js to Cloudflare and paste your worker URL here:
 const CF_WORKER_URL = 'https://yahoo-abfrage.vitalij-bauer-t2.workers.dev';
+const ALERT_WORKER_URL = 'https://stock-alarm.vitalij-bauer-t2.workers.dev';
 
 // ── Push / Price Alerts ────────────────────────────────────────────────────────
 // Öffentlicher VAPID-Key (passend zum privaten Key im Cron-Worker)
@@ -1811,6 +1812,9 @@ document.addEventListener('DOMContentLoaded',()=>{
   initSwipeToClose('filterPopupSheet', 'filterPopupOverlay', ()=>closeFilterPopup(null));
   initSwipeToClose('stockEditorSheet', 'stockEditorOverlay', ()=>closeStockEditor(null));
   initSwipeToClose('seEditSheet',      'seEditOverlay',      ()=>closeSeEdit(null));
+  initSwipeToClose('pushSettingsSheet','pushSettingsOverlay',()=>closePushSettings(null));
+  initSwipeToClose('alertsListSheet',  'alertsListOverlay',  ()=>closeAlertsList(null));
+  initSwipeToClose('alertEditorSheet', 'alertEditorOverlay', ()=>closeAlertEditor(null));
 });
 
 // ── UI Helpers ────────────────────────────────────────────────────────────────
@@ -2142,12 +2146,17 @@ function renderAlertsList() {
     const dirTxt = a.direction === 'above' ? 'über' : 'unter';
     const valTxt = a.type === 'percent' ? `${a.target}%` : `${fmt(a.target)}`;
     const triggered = a.triggeredAt ? ' · ausgelöst' : '';
+    const currentPrice = stockData[a.symbol]?.metrics?.close;
+    const priceStr = currentPrice != null ? fmt(currentPrice) : '—';
     return `<div style="display:flex;align-items:center;justify-content:space-between;background:var(--surf2);border-radius:12px;padding:12px 14px;margin-bottom:10px;cursor:pointer" onclick="window.openAlertEditor('${a.symbol}','${a.id}')">
-      <div>
+      <div style="flex:1;min-width:0">
         <div style="font-size:14px;font-weight:700">${nm} <span style="color:var(--muted);font-weight:500;font-size:12px">(${a.symbol})</span></div>
         <div style="font-size:12px;color:var(--muted);margin-top:2px">${a.type === 'percent' ? 'Änderung' : 'Kurs'} ${dirTxt} ${valTxt}${triggered}</div>
       </div>
-      <div style="color:var(--muted);font-size:18px">›</div>
+      <div style="text-align:right;margin-left:12px;flex-shrink:0">
+        <div style="font-size:14px;font-weight:700">${priceStr}</div>
+        <div style="font-size:10px;color:var(--muted)">aktuell</div>
+      </div>
     </div>`;
   }).join('');
 }
