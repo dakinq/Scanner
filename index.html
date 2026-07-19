@@ -1000,8 +1000,12 @@ function urlBase64ToUint8Array(base64String) {
 
 async function refreshPushStatus() {
   try {
-    if (!('serviceWorker' in navigator) || !('PushManager' in window)) { pushSubActive = false; return; }
-    const reg = await navigator.serviceWorker.ready;
+    if (!('serviceWorker' in navigator)) { pushSubActive = false; return; }
+    if (!('PushManager' in window)) { pushSubActive = false; return; }
+    const reg = await Promise.race([
+      navigator.serviceWorker.ready,
+      new Promise((_, reject) => setTimeout(() => reject(new Error('SW timeout')), 4000))
+    ]);
     const sub = await reg.pushManager.getSubscription();
     pushSubActive = !!sub;
   } catch(e) { pushSubActive = false; }
@@ -2090,6 +2094,25 @@ function seSetErrors(errs) {
 window.openPushSettings = async () => {
   document.getElementById('pushSettingsOverlay').classList.add('visible');
   document.getElementById('pushStatusText').textContent = 'Wird geprüft...';
+
+  // iOS Safari ohne PWA: PushManager nicht verfügbar
+  const isIOS = /iphone|ipad|ipod/i.test(navigator.userAgent);
+  const isPWA = window.matchMedia('(display-mode: standalone)').matches || navigator.standalone === true;
+  const hasPush = 'PushManager' in window && 'serviceWorker' in navigator;
+
+  if (!hasPush) {
+    const dot = document.getElementById('pushStatusDot');
+    const txt = document.getElementById('pushStatusText');
+    const btn = document.getElementById('pushToggleBtn');
+    dot.style.background = 'var(--muted)';
+    txt.textContent = isIOS && !isPWA
+      ? '⚠️ Bitte App zuerst zum Home-Bildschirm hinzufügen (Teilen → „Zum Home-Bildschirm")'
+      : '⚠️ Push wird von diesem Browser nicht unterstützt';
+    btn.style.display = 'none';
+    return;
+  }
+
+  document.getElementById('pushToggleBtn').style.display = '';
   await refreshPushStatus();
   renderPushStatus();
 };
