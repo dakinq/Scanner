@@ -1,7 +1,9 @@
 const CACHE = 'stock-scanner-v1';
+const ASSETS = ['/', '/index.html', '/manifest.json'];
 
 self.addEventListener('install', e => {
-  self.skipWaiting(); // Sofort aktivieren, kein Caching das blockieren könnte
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
+  self.skipWaiting();
 });
 
 self.addEventListener('activate', e => {
