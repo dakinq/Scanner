@@ -1011,45 +1011,73 @@ async function refreshPushStatus() {
   } catch(e) { pushSubActive = false; }
 }
 
-async function enablePush() {
-  if (!currentUser) { alert('Bitte zuerst anmelden.'); return; }
-  if (!('serviceWorker' in navigator) || !('PushManager' in window)) {
-    alert('Push wird von diesem Browser/Kontext nicht unterstützt.\niOS: App muss vom Home-Bildschirm geöffnet sein.');
-    return;
-  }
-  const perm = await Notification.requestPermission();
-  if (perm !== 'granted') { alert('Berechtigung verweigert: ' + perm); return; }
+function pushLog(msg, color) {
+  const el = document.getElementById('pushLog');
+  if (!el) return;
+  el.style.display = 'block';
+  const line = document.createElement('div');
+  line.style.color = color || '#94a3b8';
+  line.textContent = '› ' + msg;
+  el.appendChild(line);
+  el.scrollTop = el.scrollHeight;
+}
+function pushLogClear() {
+  const el = document.getElementById('pushLog');
+  if (el) { el.innerHTML = ''; el.style.display = 'none'; }
+}
 
+async function enablePush() {
+  pushLogClear();
+  pushLog('Start…');
+
+  if (!currentUser) { pushLog('❌ Kein User eingeloggt', '#ef4444'); return; }
+  pushLog('✓ User: ' + currentUser.email, '#22c55e');
+
+  if (!('serviceWorker' in navigator)) { pushLog('❌ serviceWorker nicht verfügbar', '#ef4444'); return; }
+  pushLog('✓ serviceWorker API vorhanden', '#22c55e');
+
+  if (!('PushManager' in window)) { pushLog('❌ PushManager nicht verfügbar – App vom Home-Bildschirm öffnen!', '#ef4444'); return; }
+  pushLog('✓ PushManager API vorhanden', '#22c55e');
+
+  pushLog('Frage Notification-Berechtigung an…');
+  const perm = await Notification.requestPermission();
+  if (perm !== 'granted') { pushLog('❌ Berechtigung: ' + perm, '#ef4444'); return; }
+  pushLog('✓ Berechtigung erteilt', '#22c55e');
+
+  pushLog('Warte auf Service Worker ready…');
   let reg;
   try {
     reg = await Promise.race([
       navigator.serviceWorker.ready,
-      new Promise((_, reject) => setTimeout(() => reject(new Error('Service Worker antwortet nicht (Timeout). Prüfe ob sw.js erreichbar ist.')), 6000))
+      new Promise((_, reject) => setTimeout(() => reject(new Error('Timeout nach 6s')), 6000))
     ]);
-  } catch(e) { alert('SW Fehler: ' + e.message); return; }
+    pushLog('✓ SW aktiv: ' + reg.active?.scriptURL, '#22c55e');
+  } catch(e) { pushLog('❌ SW Fehler: ' + e.message, '#ef4444'); return; }
 
+  pushLog('Erstelle Push-Subscription…');
   let sub;
   try {
     sub = await reg.pushManager.getSubscription();
-    if (!sub) {
-      sub = await reg.pushManager.subscribe({
-        userVisibleOnly: true,
-        applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY)
-      });
+    if (sub) { pushLog('✓ Bestehende Subscription gefunden', '#22c55e'); }
+    else {
+      sub = await reg.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: urlBase64ToUint8Array(VAPID_PUBLIC_KEY) });
+      pushLog('✓ Neue Subscription erstellt', '#22c55e');
     }
-  } catch(e) { alert('Subscribe Fehler: ' + e.message); return; }
+    pushLog('Endpoint: ' + sub.endpoint.slice(0, 60) + '…');
+  } catch(e) { pushLog('❌ Subscribe Fehler: ' + e.message, '#ef4444'); return; }
 
+  pushLog('Speichere in Firestore…');
   try {
     const deviceId = getDeviceId();
     const json = sub.toJSON();
     await setDoc(doc(db,'users',currentUser.uid,'pushSubscriptions',deviceId), {
-      endpoint: json.endpoint,
-      keys: json.keys,
-      updatedAt: Date.now()
+      endpoint: json.endpoint, keys: json.keys, updatedAt: Date.now()
     });
-  } catch(e) { alert('Firestore Fehler: ' + e.message); return; }
+    pushLog('✓ Gespeichert (deviceId: ' + deviceId + ')', '#22c55e');
+  } catch(e) { pushLog('❌ Firestore Fehler: ' + e.message, '#ef4444'); return; }
 
   pushSubActive = true;
+  pushLog('✅ Push erfolgreich aktiviert!', '#22c55e');
 }
 
 async function disablePush() {
@@ -2589,6 +2617,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
         <div class="status-dot" id="pushStatusDot"></div>
       </div>
       <button class="load-btn" id="pushToggleBtn" onclick="togglePush()">Aktivieren</button>
+      <div id="pushLog" style="display:none;margin-top:14px;background:#0a0f1a;border-radius:10px;padding:10px 12px;font-size:11px;font-family:monospace;color:#94a3b8;line-height:1.8;word-break:break-all"></div>
     </div>
   </div>
 </div>
