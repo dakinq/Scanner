@@ -1900,7 +1900,7 @@ function refreshTvBtn() {
 }
 
 window.openModal = sym => {
-  const {name,candles,metrics:m}=stockData[sym];
+  const {name,candles,metrics:m,fundamentals:f={}}=stockData[sym];
   modalSym = sym;
   document.getElementById('mBellBtn').onclick = () => window.openAlertEditor(sym);
   modalCandles = candles;
@@ -1911,14 +1911,84 @@ window.openModal = sym => {
   document.getElementById('tvEditRow').style.display='none';
   refreshTvBtn();
   const c1=m.change1d??0,c30=m.change30d??0;
-  document.getElementById('mStats').innerHTML=[
-    ['Kurs',`${fmt(m.close)}`,''],
-    ['1 Tag',`${c1>=0?'+':''}${fmt(c1)}%`,c1>=0?'up':'down'],
-    ['30 Tage',`${c30>=0?'+':''}${fmt(c30)}%`,c30>=0?'up':'down'],
-    ['RSI 14',m.rsi?fmt(m.rsi,1):'-',''],
-    ['MA 20',fmt(m.ma20),''],['MA 50',fmt(m.ma50),''],['MA 200',fmt(m.ma200),''],
-    ['Volumen',fmtK(m.volume),''],['52W Hoch',fmt(m.high52w),''],['52W Tief',fmt(m.low52w),''],
-  ].map(([l,v,c])=>`<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('');
+
+  // Hilfsfunktionen für Fundamentaldaten
+  const fmtPct  = v => v!=null ? `${(v*100).toFixed(1)}%` : '-';
+  const fmtBig  = v => { if(v==null) return '-'; if(v>=1e12) return (v/1e12).toFixed(2)+'T'; if(v>=1e9) return (v/1e9).toFixed(2)+'B'; if(v>=1e6) return (v/1e6).toFixed(1)+'M'; return v.toFixed(0); };
+  const fmtNum  = (v,d=2) => v!=null ? v.toFixed(d) : '-';
+  const recMap  = {strongbuy:'Starker Kauf',buy:'Kauf',hold:'Halten',sell:'Verkauf',strongsell:'Starker Verkauf'};
+  const rec     = f.recommendationKey ? (recMap[f.recommendationKey.toLowerCase()]||f.recommendationKey) : '-';
+  const recCls  = f.recommendationKey?.includes('buy') ? 'up' : f.recommendationKey?.includes('sell') ? 'down' : '';
+
+  // Upside zum Analystenziel
+  const upside  = (f.targetMeanPrice && m.close) ? ((f.targetMeanPrice-m.close)/m.close*100) : null;
+  const upsideCls = upside!=null ? (upside>=0?'up':'down') : '';
+
+  // Nächster Earnings
+  const earningsStr = f.earningsTimestamp
+    ? new Date(f.earningsTimestamp*1000).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'})
+    : '-';
+
+  document.getElementById('mStats').innerHTML = `
+    <div class="ms-section-title">📈 Kursdaten</div>
+    ${[
+      ['Kurs',          fmt(m.close),                           ''],
+      ['1 Tag',         `${c1>=0?'+':''}${fmt(c1)}%`,          c1>=0?'up':'down'],
+      ['30 Tage',       `${c30>=0?'+':''}${fmt(c30)}%`,        c30>=0?'up':'down'],
+      ['RSI 14',        m.rsi?fmt(m.rsi,1):'-',                ''],
+      ['MA 20',         fmt(m.ma20),                           ''],
+      ['MA 50',         fmt(m.ma50),                           ''],
+      ['MA 200',        fmt(m.ma200),                          ''],
+      ['52W Hoch',      fmt(m.high52w),                        ''],
+      ['52W Tief',      fmt(m.low52w),                         ''],
+      ['Volumen',       fmtK(m.volume),                        ''],
+      ['Ø Vol 3M',      f.avgVolume3m ? fmtK(f.avgVolume3m):'-', ''],
+    ].map(([l,v,c])=>`<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}
+
+    <div class="ms-section-title">🏢 Bewertung</div>
+    ${[
+      ['Marktkapital.',  fmtBig(f.marketCap),                  ''],
+      ['KGV (Trailing)', fmtNum(f.trailingPE),                 ''],
+      ['KGV (Forward)',  fmtNum(f.forwardPE),                  ''],
+      ['KBV',            fmtNum(f.priceToBook),                ''],
+      ['PEG',            fmtNum(f.pegRatio),                   ''],
+      ['EV/EBITDA',      fmtNum(f.evToEbitda),                 ''],
+      ['EPS (Trailing)', fmtNum(f.trailingEps),                ''],
+      ['EPS (Forward)',  fmtNum(f.forwardEps),                  ''],
+      ['Beta',           fmtNum(f.beta),                       ''],
+    ].map(([l,v,c])=>`<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}
+
+    <div class="ms-section-title">💰 Dividende & Wachstum</div>
+    ${[
+      ['Div. Rendite',   f.dividendYield!=null ? fmtPct(f.dividendYield) : '-', ''],
+      ['Div. Betrag',    f.dividendRate!=null ? fmt(f.dividendRate) : '-',       ''],
+      ['Umsatzwachstum', f.revenueGrowth!=null ? fmtPct(f.revenueGrowth) : '-', f.revenueGrowth>=0?'up':'down'],
+      ['Gewinnwachstum', f.earningsGrowth!=null ? fmtPct(f.earningsGrowth):'-', f.earningsGrowth>=0?'up':'down'],
+      ['Gewinnmarge',    fmtPct(f.profitMargins),                                ''],
+      ['ROE',            fmtPct(f.returnOnEquity),                               ''],
+      ['ROA',            fmtPct(f.returnOnAssets),                               ''],
+      ['Free Cashflow',  fmtBig(f.freeCashflow),                                 ''],
+      ['Schulden',       fmtBig(f.totalDebt),                                    ''],
+      ['Cash',           fmtBig(f.totalCash),                                    ''],
+    ].map(([l,v,c])=>`<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}
+
+    <div class="ms-section-title">🎯 Analysten</div>
+    ${[
+      ['Empfehlung',     rec,                                                    recCls],
+      ['Kursziel Ø',     f.targetMeanPrice ? fmt(f.targetMeanPrice) : '-',      ''],
+      ['Upside',         upside!=null ? `${upside>=0?'+':''}${upside.toFixed(1)}%` : '-', upsideCls],
+      ['Anz. Analysten', f.numAnalysts!=null ? String(f.numAnalysts) : '-',     ''],
+      ['Short Ratio',    fmtNum(f.shortRatio),                                  ''],
+      ['Nächste Earnings', earningsStr,                                          ''],
+    ].map(([l,v,c])=>`<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}
+
+    ${f.sector ? `<div class="ms-section-title">🏭 Unternehmen</div>
+    ${[
+      ['Sektor',         f.sector||'-',   ''],
+      ['Industrie',      f.industry||'-', ''],
+    ].map(([l,v,c])=>`<div class="ms-card ms-card-wide"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}` : ''}
+  `;
+
   document.getElementById('modalOverlay').classList.add('visible');
   document.body.style.overflow='hidden';
   requestAnimationFrame(()=>buildModalChart(12));
@@ -2562,7 +2632,9 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .tv-edit-row .filter-input{font-size:13px;padding:8px 10px}
 .tv-edit-save{flex-shrink:0;padding:8px 14px;border-radius:10px;border:1px solid var(--cyan);background:rgba(6,182,212,.12);color:var(--cyan);font-size:12px;font-weight:700;cursor:pointer}
 .ms-grid{display:grid;grid-template-columns:1fr 1fr;gap:8px;padding:12px 14px}
+.ms-section-title{grid-column:1/-1;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.06em;padding:10px 2px 4px;border-bottom:1px solid var(--border)}
 .ms-card{background:var(--surf2);border:1px solid var(--border);border-radius:10px;padding:9px 11px}
+.ms-card-wide{grid-column:1/-1}
 .ms-label{font-size:10px;color:var(--muted)}
 .ms-value{font-size:15px;font-weight:700;margin-top:3px;font-variant-numeric:tabular-nums}
 /* Burger Menu */
