@@ -1216,74 +1216,95 @@ async function fetchCandles(symbol, days=CANDLE_DAYS) {
 }
 
 // ── Batch Fundamentaldaten (bis zu 10 Symbols pro Request) ───────────────────
-async function fetchFundamentals(symbols) {
-  const syms = symbols.join(',');
-  const fields = [
-    'regularMarketPrice','regularMarketChange','regularMarketChangePercent',
-    'regularMarketVolume','averageDailyVolume3Month','marketCap',
-    'fiftyTwoWeekHigh','fiftyTwoWeekLow','fiftyDayAverage','twoHundredDayAverage',
-    'trailingPE','forwardPE','priceToBook','pegRatio','enterpriseToRevenue','enterpriseToEbitda',
-    'trailingEps','forwardEps','dividendYield','dividendRate',
-    'beta','shortRatio','profitMargins','revenueGrowth','earningsGrowth',
-    'freeCashflow','totalDebt','totalCash','returnOnEquity','returnOnAssets',
-    'targetMeanPrice','recommendationKey','numberOfAnalystOpinions',
-    'sector','industry','longName','earningsTimestamp'
-  ].join(',');
-  const quoteUrl = `https://query1.finance.yahoo.com/v7/finance/quote?symbols=${encodeURIComponent(syms)}&fields=${fields}`;
-  try {
-    const res = await fetch(`${CF_WORKER_URL}?url=${encodeURIComponent(quoteUrl)}`, {
-      signal: AbortSignal.timeout(15000)
-    });
-    if (!res.ok) return {};
-    const json = await res.json();
-    const quotes = json?.quoteResponse?.result ?? [];
-    const out = {};
-    quotes.forEach(q => {
-      out[q.symbol] = {
-        regularMarketPrice:         q.regularMarketPrice,
-        regularMarketChange:        q.regularMarketChange,
-        regularMarketChangePct:     q.regularMarketChangePercent,
-        regularMarketVolume:        q.regularMarketVolume,
-        avgVolume3m:                q.averageDailyVolume3Month,
-        marketCap:                  q.marketCap,
-        high52w:                    q.fiftyTwoWeekHigh,
-        low52w:                     q.fiftyTwoWeekLow,
-        ma50Yahoo:                  q.fiftyDayAverage,
-        ma200Yahoo:                 q.twoHundredDayAverage,
-        trailingPE:                 q.trailingPE,
-        forwardPE:                  q.forwardPE,
-        priceToBook:                q.priceToBook,
-        pegRatio:                   q.pegRatio,
-        evToRevenue:                q.enterpriseToRevenue,
-        evToEbitda:                 q.enterpriseToEbitda,
-        trailingEps:                q.trailingEps,
-        forwardEps:                 q.forwardEps,
-        dividendYield:              q.dividendYield,
-        dividendRate:               q.dividendRate,
-        beta:                       q.beta,
-        shortRatio:                 q.shortRatio,
-        profitMargins:              q.profitMargins,
-        revenueGrowth:              q.revenueGrowth,
-        earningsGrowth:             q.earningsGrowth,
-        freeCashflow:               q.freeCashflow,
-        totalDebt:                  q.totalDebt,
-        totalCash:                  q.totalCash,
-        returnOnEquity:             q.returnOnEquity,
-        returnOnAssets:             q.returnOnAssets,
-        targetMeanPrice:            q.targetMeanPrice,
-        recommendationKey:          q.recommendationKey,
-        numAnalysts:                q.numberOfAnalystOpinions,
-        sector:                     q.sector,
-        industry:                   q.industry,
-        longName:                   q.longName,
-        earningsTimestamp:          q.earningsTimestamp,
-      };
-    });
-    return out;
-  } catch(e) {
-    console.warn('fetchFundamentals failed:', e.message);
-    return {};
-  }
+// Kombinierter Fetch: Candles + Fundamentaldaten in einem Request via v8/chart modules
+async function fetchCandlesAndFundamentals(symbol, days=CANDLE_DAYS) {
+  const end   = Math.floor(Date.now()/1000);
+  const start = end - days*86400;
+  const modules = 'financialData,defaultKeyStatistics,summaryDetail,assetProfile,quoteType';
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`
+    + `?interval=1d&period1=${start}&period2=${end}&modules=${encodeURIComponent(modules)}`;
+  const res = await fetch(`${CF_WORKER_URL}?url=${encodeURIComponent(url)}`, {
+    signal: AbortSignal.timeout(20000)
+  });
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  const result = json?.chart?.result?.[0];
+  if (!result) throw new Error('Keine Daten');
+
+  // ── Candles ──
+  const ts = result.timestamp, q = result.indicators.quote[0];
+  const candles = ts.map((t,i)=>({
+    time:t, open:q.open[i], high:q.high[i], low:q.low[i], close:q.close[i], volume:q.volume[i]
+  })).filter(c=>c.open&&c.high&&c.low&&c.close);
+  if (!candles.length) throw new Error('Leere Candles');
+
+  // ── Fundamentaldaten aus modules ──
+  const meta = result.meta ?? {};
+  const fin  = result.financialData ?? {};
+  const ks   = result.defaultKeyStatistics ?? {};
+  const sd   = result.summaryDetail ?? {};
+  const ap   = result.assetProfile ?? {};
+  const qt   = result.quoteType ?? {};
+
+  // Hilfsfunktion: .raw Wert oder direkter Wert
+  const r = v => v?.raw ?? v ?? null;
+
+  const fundamentals = {
+    // Kurs (aus meta)
+    regularMarketPrice:     r(meta.regularMarketPrice),
+    avgVolume3m:            r(meta.averageDailyVolume10Day), // beste Alternative in v8
+    marketCap:              r(sd.marketCap),
+    // 52W (aus summaryDetail)
+    high52w:                r(sd.fiftyTwoWeekHigh),
+    low52w:                 r(sd.fiftyTwoWeekLow),
+    ma50Yahoo:              r(sd.fiftyDayAverage),
+    ma200Yahoo:             r(sd.twoHundredDayAverage),
+    // Bewertung
+    trailingPE:             r(sd.trailingPE),
+    forwardPE:              r(sd.forwardPE),
+    priceToBook:            r(ks.priceToBook),
+    pegRatio:               r(ks.pegRatio),
+    evToRevenue:            r(ks.enterpriseToRevenue),
+    evToEbitda:             r(ks.enterpriseToEbitda),
+    trailingEps:            r(ks.trailingEps),
+    forwardEps:             r(ks.forwardEps),
+    // Dividende
+    dividendYield:          r(sd.dividendYield),
+    dividendRate:           r(sd.dividendRate),
+    // Risiko
+    beta:                   r(sd.beta) ?? r(ks.beta),
+    shortRatio:             r(ks.shortRatio),
+    // Wachstum & Rentabilität (aus financialData)
+    profitMargins:          r(fin.profitMargins),
+    revenueGrowth:          r(fin.revenueGrowth),
+    earningsGrowth:         r(fin.earningsGrowth),
+    grossMargins:           r(fin.grossMargins),
+    ebitdaMargins:          r(fin.ebitdaMargins),
+    operatingMargins:       r(fin.operatingMargins),
+    // Bilanz
+    freeCashflow:           r(fin.freeCashflow),
+    totalDebt:              r(fin.totalDebt),
+    totalCash:              r(fin.totalCash),
+    returnOnEquity:         r(fin.returnOnEquity),
+    returnOnAssets:         r(fin.returnOnAssets),
+    debtToEquity:           r(fin.debtToEquity),
+    currentRatio:           r(fin.currentRatio),
+    // Analysten
+    targetMeanPrice:        r(fin.targetMeanPrice),
+    targetHighPrice:        r(fin.targetHighPrice),
+    targetLowPrice:         r(fin.targetLowPrice),
+    recommendationKey:      fin.recommendationKey ?? null,
+    numAnalysts:            r(fin.numberOfAnalystOpinions),
+    // Unternehmen
+    sector:                 ap.sector ?? null,
+    industry:               ap.industry ?? null,
+    longName:               qt.longName ?? meta.longName ?? null,
+    earningsTimestamp:      r(ks.lastFiscalYearEnd) ?? null,
+    nextEarningsDate:       r(ks.nextFiscalYearEnd) ?? null,
+  };
+
+  return { candles, fundamentals };
 }
 
 // ── Main Load ─────────────────────────────────────────────────────────────────
@@ -1311,39 +1332,30 @@ window.loadAllData = async () => {
   const total = toLoad.length;
 
   try {
-    // ── Phase 1: Fundamentaldaten per Batch (10 Symbols pro Request) ──────────
-    const FUND_BATCH = 10;
-    const fundamentalsMap = {};
-    for(let i=0; i<needsLoad.length; i+=FUND_BATCH) {
-      const chunk = needsLoad.slice(i, i+FUND_BATCH);
-      updateProgress(i, total, `Fundamentals ${i+1}–${Math.min(i+FUND_BATCH,needsLoad.length)} von ${needsLoad.length}`);
-      try {
-        const result = await fetchFundamentals(chunk);
-        Object.assign(fundamentalsMap, result);
-      } catch(e) { console.warn('Fundamentals batch failed:', e.message); }
-      await new Promise(r=>setTimeout(r,200));
-    }
-
-    // ── Phase 2: Candle-Daten (3 parallel, um Yahoo nicht zu überlasten) ──────
-    const CANDLE_BATCH = 3;
-    for(let i=0; i<needsLoad.length; i+=CANDLE_BATCH) {
-      const chunk = needsLoad.slice(i, i+CANDLE_BATCH);
-      updateProgress(i, total, `Kursdaten ${i+1}–${Math.min(i+CANDLE_BATCH,needsLoad.length)} von ${needsLoad.length} (${total} gesamt)`);
+    // ── Ein Loop, ein Request pro Symbol: Candles + Fundamentals kombiniert ──
+    const BATCH = 10;
+    for(let i=0; i<needsLoad.length; i+=BATCH) {
+      const chunk = needsLoad.slice(i, i+BATCH);
+      updateProgress(i, total, `${i+1}–${Math.min(i+BATCH,needsLoad.length)} von ${needsLoad.length} (${total} gesamt)`);
       await Promise.all(chunk.map(async sym=>{
         try {
           const days = needsBackfill(sym) ? CANDLE_DAYS : Math.min(missingDays(sym)+5, CANDLE_DAYS);
-          const fresh = await fetchCandles(sym, days);
+          const {candles: fresh, fundamentals: fund} = await fetchCandlesAndFundamentals(sym, days);
           const candles = mergeCandles(stockData[sym]?.candles, fresh);
           const metrics = computeMetrics(candles);
           const info = ALL_STOCKS[sym] ?? {name:sym, indices:[]};
-          const fund = fundamentalsMap[sym] ?? stockData[sym]?.fundamentals ?? {};
+          // Bestehende Fundamentals behalten falls neue leer sind
+          const mergedFund = Object.keys(fund).some(k=>fund[k]!=null)
+            ? fund
+            : (stockData[sym]?.fundamentals ?? {});
           stockData[sym] = {
-            candles, metrics, fundamentals: fund,
-            name: fund.longName || info.name,
+            candles, metrics,
+            fundamentals: mergedFund,
+            name: mergedFund.longName || info.name,
             indices: info.indices,
             lastUpdated: Date.now()
           };
-          saveToFirestore(sym, candles, metrics, fund).catch(e=>{
+          saveToFirestore(sym, candles, metrics, mergedFund).catch(e=>{
             console.error(`Firestore save failed [${sym}]:`, e.code||e.message);
             errors.push(`${sym}(DB)`);
           });
@@ -1352,7 +1364,7 @@ window.loadAllData = async () => {
           errors.push(sym);
         }
       }));
-      await new Promise(r=>setTimeout(r,350));
+      await new Promise(r=>setTimeout(r,300));
     }
   } catch(fatalErr) {
     console.error('loadAllData fatal error:', fatalErr);
@@ -1965,17 +1977,24 @@ window.openModal = sym => {
       ['Umsatzwachstum', f.revenueGrowth!=null ? fmtPct(f.revenueGrowth) : '-', f.revenueGrowth>=0?'up':'down'],
       ['Gewinnwachstum', f.earningsGrowth!=null ? fmtPct(f.earningsGrowth):'-', f.earningsGrowth>=0?'up':'down'],
       ['Gewinnmarge',    fmtPct(f.profitMargins),                                ''],
+      ['Bruttomarge',    fmtPct(f.grossMargins),                                 ''],
+      ['EBITDA-Marge',   fmtPct(f.ebitdaMargins),                               ''],
+      ['Operat. Marge',  fmtPct(f.operatingMargins),                             ''],
       ['ROE',            fmtPct(f.returnOnEquity),                               ''],
       ['ROA',            fmtPct(f.returnOnAssets),                               ''],
       ['Free Cashflow',  fmtBig(f.freeCashflow),                                 ''],
       ['Schulden',       fmtBig(f.totalDebt),                                    ''],
       ['Cash',           fmtBig(f.totalCash),                                    ''],
+      ['Debt/Equity',    fmtNum(f.debtToEquity),                                 ''],
+      ['Current Ratio',  fmtNum(f.currentRatio),                                 ''],
     ].map(([l,v,c])=>`<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}
 
     <div class="ms-section-title">🎯 Analysten</div>
     ${[
       ['Empfehlung',     rec,                                                    recCls],
       ['Kursziel Ø',     f.targetMeanPrice ? fmt(f.targetMeanPrice) : '-',      ''],
+      ['Kursziel Hoch',  f.targetHighPrice ? fmt(f.targetHighPrice) : '-',       'up'],
+      ['Kursziel Tief',  f.targetLowPrice  ? fmt(f.targetLowPrice)  : '-',       'down'],
       ['Upside',         upside!=null ? `${upside>=0?'+':''}${upside.toFixed(1)}%` : '-', upsideCls],
       ['Anz. Analysten', f.numAnalysts!=null ? String(f.numAnalysts) : '-',     ''],
       ['Short Ratio',    fmtNum(f.shortRatio),                                  ''],
