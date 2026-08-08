@@ -1215,21 +1215,21 @@ async function fetchCandles(symbol, days=CANDLE_DAYS) {
   return candles;
 }
 
-// ── Batch Fundamentaldaten (bis zu 10 Symbols pro Request) ───────────────────
-// Kombinierter Fetch: Candles + Fundamentaldaten in einem Request via v8/chart modules
+// ── Kombinierter Fetch: Candles (v8/chart) + Fundamentals (v10/quoteSummary) ──
 async function fetchCandlesAndFundamentals(symbol, days=CANDLE_DAYS) {
   const end   = Math.floor(Date.now()/1000);
   const start = end - days*86400;
-  const modules = 'financialData,defaultKeyStatistics,summaryDetail,assetProfile,quoteType';
-  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`
-    + `?interval=1d&period1=${start}&period2=${end}&modules=${encodeURIComponent(modules)}`;
-  const res = await fetch(`${CF_WORKER_URL}?url=${encodeURIComponent(url)}`, {
+
+  // ── Request 1: Candles via v8/chart ──
+  const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`
+    + `?interval=1d&period1=${start}&period2=${end}`;
+  const chartRes = await fetch(`${CF_WORKER_URL}?url=${encodeURIComponent(chartUrl)}`, {
     signal: AbortSignal.timeout(20000)
   });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
-  const json = await res.json();
-  if (json.error) throw new Error(json.error);
-  const result = json?.chart?.result?.[0];
+  if (!chartRes.ok) throw new Error(`HTTP ${chartRes.status}`);
+  const chartJson = await chartRes.json();
+  if (chartJson.error) throw new Error(chartJson.error);
+  const result = chartJson?.chart?.result?.[0];
   if (!result) throw new Error('Keine Daten');
 
   // ── Candles ──
@@ -1239,13 +1239,30 @@ async function fetchCandlesAndFundamentals(symbol, days=CANDLE_DAYS) {
   })).filter(c=>c.open&&c.high&&c.low&&c.close);
   if (!candles.length) throw new Error('Leere Candles');
 
-  // ── Fundamentaldaten aus modules ──
-  const meta = result.meta ?? {};
-  const fin  = result.financialData ?? {};
-  const ks   = result.defaultKeyStatistics ?? {};
-  const sd   = result.summaryDetail ?? {};
-  const ap   = result.assetProfile ?? {};
-  const qt   = result.quoteType ?? {};
+  // ── Request 2: Fundamentaldaten via v10/quoteSummary ──
+  const modules = 'financialData,defaultKeyStatistics,summaryDetail,assetProfile,quoteType,calendarEvents';
+  const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}`
+    + `?modules=${encodeURIComponent(modules)}`;
+  let fin={}, ks={}, sd={}, ap={}, qt={}, cal={}, meta={};
+  try {
+    const summaryRes = await fetch(`${CF_WORKER_URL}?url=${encodeURIComponent(summaryUrl)}`, {
+      signal: AbortSignal.timeout(15000)
+    });
+    if (summaryRes.ok) {
+      const summaryJson = await summaryRes.json();
+      const qsr = summaryJson?.quoteSummary?.result?.[0] ?? {};
+      fin  = qsr.financialData          ?? {};
+      ks   = qsr.defaultKeyStatistics   ?? {};
+      sd   = qsr.summaryDetail          ?? {};
+      ap   = qsr.assetProfile           ?? {};
+      qt   = qsr.quoteType              ?? {};
+      cal  = qsr.calendarEvents         ?? {};
+    }
+  } catch(e) {
+    // Fundamentals-Fehler ist nicht kritisch – Candles sind trotzdem nutzbar
+    console.warn(`quoteSummary [${symbol}]:`, e.message);
+  }
+  meta = result.meta ?? {};
 
   // Hilfsfunktion: .raw Wert oder direkter Wert
   const r = v => v?.raw ?? v ?? null;
@@ -1253,7 +1270,7 @@ async function fetchCandlesAndFundamentals(symbol, days=CANDLE_DAYS) {
   const fundamentals = {
     // Kurs (aus meta)
     regularMarketPrice:     r(meta.regularMarketPrice),
-    avgVolume3m:            r(meta.averageDailyVolume10Day), // beste Alternative in v8
+    avgVolume3m:            r(sd.averageVolume3Month) ?? r(meta.averageDailyVolume10Day),
     marketCap:              r(sd.marketCap),
     // 52W (aus summaryDetail)
     high52w:                r(sd.fiftyTwoWeekHigh),
@@ -1300,8 +1317,9 @@ async function fetchCandlesAndFundamentals(symbol, days=CANDLE_DAYS) {
     sector:                 ap.sector ?? null,
     industry:               ap.industry ?? null,
     longName:               qt.longName ?? meta.longName ?? null,
-    earningsTimestamp:      r(ks.lastFiscalYearEnd) ?? null,
-    nextEarningsDate:       r(ks.nextFiscalYearEnd) ?? null,
+    // Nächstes Earnings-Datum aus calendarEvents (korrekte Quelle)
+    earningsTimestamp:      r(cal.earnings?.earningsDate?.[0]) ?? r(ks.mostRecentQuarter) ?? null,
+    nextEarningsDate:       r(cal.earnings?.earningsDate?.[0]) ?? null,
   };
 
   return { candles, fundamentals };
