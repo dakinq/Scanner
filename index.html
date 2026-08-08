@@ -1215,21 +1215,22 @@ async function fetchCandles(symbol, days=CANDLE_DAYS) {
   return candles;
 }
 
-// ── Kombinierter Fetch: Candles (v8/chart) + Fundamentals (v10/quoteSummary) ──
+// ── Fetch: Candles + verfügbare Fundamentals aus v8/chart (meta) ─────────────
+// Yahoo v10/quoteSummary ist hinter Auth-Wall (401). Alle verfügbaren Daten
+// kommen daher aus dem meta-Objekt des v8/chart-Responses + Candle-Berechnungen.
 async function fetchCandlesAndFundamentals(symbol, days=CANDLE_DAYS) {
   const end   = Math.floor(Date.now()/1000);
   const start = end - days*86400;
 
-  // ── Request 1: Candles via v8/chart ──
   const chartUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${symbol}`
     + `?interval=1d&period1=${start}&period2=${end}`;
-  const chartRes = await fetch(`${CF_WORKER_URL}?url=${encodeURIComponent(chartUrl)}`, {
+  const res = await fetch(`${CF_WORKER_URL}?url=${encodeURIComponent(chartUrl)}`, {
     signal: AbortSignal.timeout(20000)
   });
-  if (!chartRes.ok) throw new Error(`HTTP ${chartRes.status}`);
-  const chartJson = await chartRes.json();
-  if (chartJson.error) throw new Error(chartJson.error);
-  const result = chartJson?.chart?.result?.[0];
+  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const json = await res.json();
+  if (json.error) throw new Error(json.error);
+  const result = json?.chart?.result?.[0];
   if (!result) throw new Error('Keine Daten');
 
   // ── Candles ──
@@ -1239,87 +1240,72 @@ async function fetchCandlesAndFundamentals(symbol, days=CANDLE_DAYS) {
   })).filter(c=>c.open&&c.high&&c.low&&c.close);
   if (!candles.length) throw new Error('Leere Candles');
 
-  // ── Request 2: Fundamentaldaten via v10/quoteSummary ──
-  const modules = 'financialData,defaultKeyStatistics,summaryDetail,assetProfile,quoteType,calendarEvents';
-  const summaryUrl = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${symbol}`
-    + `?modules=${encodeURIComponent(modules)}`;
-  let fin={}, ks={}, sd={}, ap={}, qt={}, cal={}, meta={};
-  try {
-    const summaryRes = await fetch(`${CF_WORKER_URL}?url=${encodeURIComponent(summaryUrl)}`, {
-      signal: AbortSignal.timeout(15000)
-    });
-    if (summaryRes.ok) {
-      const summaryJson = await summaryRes.json();
-      const qsr = summaryJson?.quoteSummary?.result?.[0] ?? {};
-      fin  = qsr.financialData          ?? {};
-      ks   = qsr.defaultKeyStatistics   ?? {};
-      sd   = qsr.summaryDetail          ?? {};
-      ap   = qsr.assetProfile           ?? {};
-      qt   = qsr.quoteType              ?? {};
-      cal  = qsr.calendarEvents         ?? {};
-    }
-  } catch(e) {
-    // Fundamentals-Fehler ist nicht kritisch – Candles sind trotzdem nutzbar
-    console.warn(`quoteSummary [${symbol}]:`, e.message);
-  }
-  meta = result.meta ?? {};
+  // ── Fundamentals aus meta (das einzige was v8 liefert) ──
+  const meta = result.meta ?? {};
+  const cl   = candles.map(c => c.close);
 
-  // Hilfsfunktion: .raw Wert oder direkter Wert
-  const r = v => v?.raw ?? v ?? null;
+  // Volumen-Durchschnitt aus Candles berechnen (letzten 60 Handelstage)
+  const vols     = candles.map(c => c.volume).filter(v => v > 0);
+  const avgVol3m = vols.length >= 2
+    ? vols.slice(-Math.min(63, vols.length)).reduce((a,b)=>a+b,0) / Math.min(63, vols.length)
+    : null;
 
+  // Tägliche Returns für Beta-Annäherung (wird ohne Benchmark-Index nur intern genutzt)
   const fundamentals = {
-    // Kurs (aus meta)
-    regularMarketPrice:     r(meta.regularMarketPrice),
-    avgVolume3m:            r(sd.averageVolume3Month) ?? r(meta.averageDailyVolume10Day),
-    marketCap:              r(sd.marketCap),
-    // 52W (aus summaryDetail)
-    high52w:                r(sd.fiftyTwoWeekHigh),
-    low52w:                 r(sd.fiftyTwoWeekLow),
-    ma50Yahoo:              r(sd.fiftyDayAverage),
-    ma200Yahoo:             r(sd.twoHundredDayAverage),
-    // Bewertung
-    trailingPE:             r(sd.trailingPE),
-    forwardPE:              r(sd.forwardPE),
-    priceToBook:            r(ks.priceToBook),
-    pegRatio:               r(ks.pegRatio),
-    evToRevenue:            r(ks.enterpriseToRevenue),
-    evToEbitda:             r(ks.enterpriseToEbitda),
-    trailingEps:            r(ks.trailingEps),
-    forwardEps:             r(ks.forwardEps),
-    // Dividende
-    dividendYield:          r(sd.dividendYield),
-    dividendRate:           r(sd.dividendRate),
-    // Risiko
-    beta:                   r(sd.beta) ?? r(ks.beta),
-    shortRatio:             r(ks.shortRatio),
-    // Wachstum & Rentabilität (aus financialData)
-    profitMargins:          r(fin.profitMargins),
-    revenueGrowth:          r(fin.revenueGrowth),
-    earningsGrowth:         r(fin.earningsGrowth),
-    grossMargins:           r(fin.grossMargins),
-    ebitdaMargins:          r(fin.ebitdaMargins),
-    operatingMargins:       r(fin.operatingMargins),
-    // Bilanz
-    freeCashflow:           r(fin.freeCashflow),
-    totalDebt:              r(fin.totalDebt),
-    totalCash:              r(fin.totalCash),
-    returnOnEquity:         r(fin.returnOnEquity),
-    returnOnAssets:         r(fin.returnOnAssets),
-    debtToEquity:           r(fin.debtToEquity),
-    currentRatio:           r(fin.currentRatio),
-    // Analysten
-    targetMeanPrice:        r(fin.targetMeanPrice),
-    targetHighPrice:        r(fin.targetHighPrice),
-    targetLowPrice:         r(fin.targetLowPrice),
-    recommendationKey:      fin.recommendationKey ?? null,
-    numAnalysts:            r(fin.numberOfAnalystOpinions),
-    // Unternehmen
-    sector:                 ap.sector ?? null,
-    industry:               ap.industry ?? null,
-    longName:               qt.longName ?? meta.longName ?? null,
-    // Nächstes Earnings-Datum aus calendarEvents (korrekte Quelle)
-    earningsTimestamp:      r(cal.earnings?.earningsDate?.[0]) ?? r(ks.mostRecentQuarter) ?? null,
-    nextEarningsDate:       r(cal.earnings?.earningsDate?.[0]) ?? null,
+    // ── Kursdaten aus meta ──
+    regularMarketPrice: meta.regularMarketPrice  ?? null,
+    longName:           meta.longName            ?? null,
+    currency:           meta.currency            ?? null,
+    exchangeName:       meta.fullExchangeName    ?? meta.exchangeName ?? null,
+
+    // ── 52-Wochen-Range aus meta ──
+    high52w:            meta.fiftyTwoWeekHigh    ?? null,
+    low52w:             meta.fiftyTwoWeekLow     ?? null,
+
+    // ── Tageshandel aus meta ──
+    dayHigh:            meta.regularMarketDayHigh ?? null,
+    dayLow:             meta.regularMarketDayLow  ?? null,
+    prevClose:          meta.chartPreviousClose   ?? null,
+
+    // ── Volumen ──
+    avgVolume3m:        avgVol3m,
+
+    // ── Nicht verfügbar über v8 (Yahoo v10 Auth-Wall) ──
+    marketCap:          null,
+    trailingPE:         null,
+    forwardPE:          null,
+    priceToBook:        null,
+    pegRatio:           null,
+    evToRevenue:        null,
+    evToEbitda:         null,
+    trailingEps:        null,
+    forwardEps:         null,
+    dividendYield:      null,
+    dividendRate:       null,
+    beta:               null,
+    shortRatio:         null,
+    profitMargins:      null,
+    revenueGrowth:      null,
+    earningsGrowth:     null,
+    grossMargins:       null,
+    ebitdaMargins:      null,
+    operatingMargins:   null,
+    freeCashflow:       null,
+    totalDebt:          null,
+    totalCash:          null,
+    returnOnEquity:     null,
+    returnOnAssets:     null,
+    debtToEquity:       null,
+    currentRatio:       null,
+    targetMeanPrice:    null,
+    targetHighPrice:    null,
+    targetLowPrice:     null,
+    recommendationKey:  null,
+    numAnalysts:        null,
+    sector:             null,
+    industry:           null,
+    earningsTimestamp:  null,
+    nextEarningsDate:   null,
   };
 
   return { candles, fundamentals };
@@ -1942,89 +1928,89 @@ window.openModal = sym => {
   refreshTvBtn();
   const c1=m.change1d??0,c30=m.change30d??0;
 
-  // Hilfsfunktionen für Fundamentaldaten
-  const fmtPct  = v => v!=null ? `${(v*100).toFixed(1)}%` : '-';
-  const fmtBig  = v => { if(v==null) return '-'; if(v>=1e12) return (v/1e12).toFixed(2)+'T'; if(v>=1e9) return (v/1e9).toFixed(2)+'B'; if(v>=1e6) return (v/1e6).toFixed(1)+'M'; return v.toFixed(0); };
-  const fmtNum  = (v,d=2) => v!=null ? v.toFixed(d) : '-';
-  const recMap  = {strongbuy:'Starker Kauf',buy:'Kauf',hold:'Halten',sell:'Verkauf',strongsell:'Starker Verkauf'};
-  const rec     = f.recommendationKey ? (recMap[f.recommendationKey.toLowerCase()]||f.recommendationKey) : '-';
-  const recCls  = f.recommendationKey?.includes('buy') ? 'up' : f.recommendationKey?.includes('sell') ? 'down' : '';
+  // Hilfsfunktionen
+  const fmtPct  = v => v!=null ? `${(v*100).toFixed(1)}%` : null;
+  const fmtBig  = v => { if(v==null) return null; if(v>=1e12) return (v/1e12).toFixed(2)+'T'; if(v>=1e9) return (v/1e9).toFixed(2)+'B'; if(v>=1e6) return (v/1e6).toFixed(1)+'M'; return v.toFixed(0); };
+  const fmtNum  = (v,d=2) => v!=null ? v.toFixed(d) : null;
+  // Rendert nur Felder deren Wert nicht null/undefined ist
+  const msCard  = (l,v,c='') => v!=null ? `<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>` : '';
+  // Rendert eine Sektion nur wenn mindestens ein Feld einen Wert hat
+  const msSection = (title, cards) => { const c=cards.join(''); return c ? `<div class="ms-section-title">${title}</div>${c}` : ''; };
 
-  // Upside zum Analystenziel
+  const recMap  = {strongbuy:'Starker Kauf',buy:'Kauf',hold:'Halten',sell:'Verkauf',strongsell:'Starker Verkauf'};
+  const rec     = f.recommendationKey ? (recMap[f.recommendationKey.toLowerCase()]||f.recommendationKey) : null;
+  const recCls  = f.recommendationKey?.includes('buy') ? 'up' : f.recommendationKey?.includes('sell') ? 'down' : '';
   const upside  = (f.targetMeanPrice && m.close) ? ((f.targetMeanPrice-m.close)/m.close*100) : null;
   const upsideCls = upside!=null ? (upside>=0?'up':'down') : '';
-
-  // Nächster Earnings
   const earningsStr = f.earningsTimestamp
     ? new Date(f.earningsTimestamp*1000).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit'})
-    : '-';
+    : null;
 
-  document.getElementById('mStats').innerHTML = `
-    <div class="ms-section-title">📈 Kursdaten</div>
-    ${[
-      ['Kurs',          fmt(m.close),                           ''],
-      ['1 Tag',         `${c1>=0?'+':''}${fmt(c1)}%`,          c1>=0?'up':'down'],
-      ['30 Tage',       `${c30>=0?'+':''}${fmt(c30)}%`,        c30>=0?'up':'down'],
-      ['RSI 14',        m.rsi?fmt(m.rsi,1):'-',                ''],
-      ['MA 20',         fmt(m.ma20),                           ''],
-      ['MA 50',         fmt(m.ma50),                           ''],
-      ['MA 200',        fmt(m.ma200),                          ''],
-      ['52W Hoch',      fmt(m.high52w),                        ''],
-      ['52W Tief',      fmt(m.low52w),                         ''],
-      ['Volumen',       fmtK(m.volume),                        ''],
-      ['Ø Vol 3M',      f.avgVolume3m ? fmtK(f.avgVolume3m):'-', ''],
-    ].map(([l,v,c])=>`<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}
+  // 52W-Werte: aus metrics (aus Candles berechnet) oder aus fundamentals (Yahoo meta)
+  const high52w = m.high52w ?? f.high52w;
+  const low52w  = m.low52w  ?? f.low52w;
 
-    <div class="ms-section-title">🏢 Bewertung</div>
-    ${[
-      ['Marktkapital.',  fmtBig(f.marketCap),                  ''],
-      ['KGV (Trailing)', fmtNum(f.trailingPE),                 ''],
-      ['KGV (Forward)',  fmtNum(f.forwardPE),                  ''],
-      ['KBV',            fmtNum(f.priceToBook),                ''],
-      ['PEG',            fmtNum(f.pegRatio),                   ''],
-      ['EV/EBITDA',      fmtNum(f.evToEbitda),                 ''],
-      ['EPS (Trailing)', fmtNum(f.trailingEps),                ''],
-      ['EPS (Forward)',  fmtNum(f.forwardEps),                  ''],
-      ['Beta',           fmtNum(f.beta),                       ''],
-    ].map(([l,v,c])=>`<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}
-
-    <div class="ms-section-title">💰 Dividende & Wachstum</div>
-    ${[
-      ['Div. Rendite',   f.dividendYield!=null ? fmtPct(f.dividendYield) : '-', ''],
-      ['Div. Betrag',    f.dividendRate!=null ? fmt(f.dividendRate) : '-',       ''],
-      ['Umsatzwachstum', f.revenueGrowth!=null ? fmtPct(f.revenueGrowth) : '-', f.revenueGrowth>=0?'up':'down'],
-      ['Gewinnwachstum', f.earningsGrowth!=null ? fmtPct(f.earningsGrowth):'-', f.earningsGrowth>=0?'up':'down'],
-      ['Gewinnmarge',    fmtPct(f.profitMargins),                                ''],
-      ['Bruttomarge',    fmtPct(f.grossMargins),                                 ''],
-      ['EBITDA-Marge',   fmtPct(f.ebitdaMargins),                               ''],
-      ['Operat. Marge',  fmtPct(f.operatingMargins),                             ''],
-      ['ROE',            fmtPct(f.returnOnEquity),                               ''],
-      ['ROA',            fmtPct(f.returnOnAssets),                               ''],
-      ['Free Cashflow',  fmtBig(f.freeCashflow),                                 ''],
-      ['Schulden',       fmtBig(f.totalDebt),                                    ''],
-      ['Cash',           fmtBig(f.totalCash),                                    ''],
-      ['Debt/Equity',    fmtNum(f.debtToEquity),                                 ''],
-      ['Current Ratio',  fmtNum(f.currentRatio),                                 ''],
-    ].map(([l,v,c])=>`<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}
-
-    <div class="ms-section-title">🎯 Analysten</div>
-    ${[
-      ['Empfehlung',     rec,                                                    recCls],
-      ['Kursziel Ø',     f.targetMeanPrice ? fmt(f.targetMeanPrice) : '-',      ''],
-      ['Kursziel Hoch',  f.targetHighPrice ? fmt(f.targetHighPrice) : '-',       'up'],
-      ['Kursziel Tief',  f.targetLowPrice  ? fmt(f.targetLowPrice)  : '-',       'down'],
-      ['Upside',         upside!=null ? `${upside>=0?'+':''}${upside.toFixed(1)}%` : '-', upsideCls],
-      ['Anz. Analysten', f.numAnalysts!=null ? String(f.numAnalysts) : '-',     ''],
-      ['Short Ratio',    fmtNum(f.shortRatio),                                  ''],
-      ['Nächste Earnings', earningsStr,                                          ''],
-    ].map(([l,v,c])=>`<div class="ms-card"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}
-
-    ${f.sector ? `<div class="ms-section-title">🏭 Unternehmen</div>
-    ${[
-      ['Sektor',         f.sector||'-',   ''],
-      ['Industrie',      f.industry||'-', ''],
-    ].map(([l,v,c])=>`<div class="ms-card ms-card-wide"><div class="ms-label">${l}</div><div class="ms-value ${c}">${v}</div></div>`).join('')}` : ''}
-  `;
+  document.getElementById('mStats').innerHTML = [
+    msSection('📈 Kursdaten', [
+      msCard('Kurs',       fmt(m.close)),
+      msCard('1 Tag',      `${c1>=0?'+':''}${fmt(c1)}%`,   c1>=0?'up':'down'),
+      msCard('30 Tage',    `${c30>=0?'+':''}${fmt(c30)}%`, c30>=0?'up':'down'),
+      msCard('Tageshoch',  f.dayHigh  ? fmt(f.dayHigh)  : null),
+      msCard('Tagestief',  f.dayLow   ? fmt(f.dayLow)   : null),
+      msCard('Vortag',     f.prevClose ? fmt(f.prevClose) : null),
+      msCard('RSI 14',     m.rsi ? fmt(m.rsi,1) : null),
+      msCard('MA 20',      m.ma20  ? fmt(m.ma20)  : null),
+      msCard('MA 50',      m.ma50  ? fmt(m.ma50)  : null),
+      msCard('MA 200',     m.ma200 ? fmt(m.ma200) : null),
+      msCard('52W Hoch',   high52w ? fmt(high52w) : null),
+      msCard('52W Tief',   low52w  ? fmt(low52w)  : null),
+      msCard('Volumen',    fmtK(m.volume)),
+      msCard('Ø Vol 3M',   f.avgVolume3m ? fmtK(f.avgVolume3m) : null),
+      msCard('Börse',      f.exchangeName ?? null),
+      msCard('Währung',    f.currency ?? null),
+    ]),
+    msSection('🏢 Bewertung', [
+      msCard('Marktkapital.',  fmtBig(f.marketCap)),
+      msCard('KGV (Trailing)', fmtNum(f.trailingPE)),
+      msCard('KGV (Forward)',  fmtNum(f.forwardPE)),
+      msCard('KBV',            fmtNum(f.priceToBook)),
+      msCard('PEG',            fmtNum(f.pegRatio)),
+      msCard('EV/EBITDA',      fmtNum(f.evToEbitda)),
+      msCard('EPS (Trailing)', fmtNum(f.trailingEps)),
+      msCard('EPS (Forward)',  fmtNum(f.forwardEps)),
+      msCard('Beta',           fmtNum(f.beta)),
+    ]),
+    msSection('💰 Dividende & Wachstum', [
+      msCard('Div. Rendite',   fmtPct(f.dividendYield)),
+      msCard('Div. Betrag',    f.dividendRate!=null ? fmt(f.dividendRate) : null),
+      msCard('Umsatzwachstum', fmtPct(f.revenueGrowth),  f.revenueGrowth>=0?'up':'down'),
+      msCard('Gewinnwachstum', fmtPct(f.earningsGrowth), f.earningsGrowth>=0?'up':'down'),
+      msCard('Gewinnmarge',    fmtPct(f.profitMargins)),
+      msCard('Bruttomarge',    fmtPct(f.grossMargins)),
+      msCard('EBITDA-Marge',   fmtPct(f.ebitdaMargins)),
+      msCard('Operat. Marge',  fmtPct(f.operatingMargins)),
+      msCard('ROE',            fmtPct(f.returnOnEquity)),
+      msCard('ROA',            fmtPct(f.returnOnAssets)),
+      msCard('Free Cashflow',  fmtBig(f.freeCashflow)),
+      msCard('Schulden',       fmtBig(f.totalDebt)),
+      msCard('Cash',           fmtBig(f.totalCash)),
+      msCard('Debt/Equity',    fmtNum(f.debtToEquity)),
+      msCard('Current Ratio',  fmtNum(f.currentRatio)),
+    ]),
+    msSection('🎯 Analysten', [
+      msCard('Empfehlung',       rec, recCls),
+      msCard('Kursziel Ø',       f.targetMeanPrice ? fmt(f.targetMeanPrice) : null),
+      msCard('Kursziel Hoch',    f.targetHighPrice ? fmt(f.targetHighPrice) : null, 'up'),
+      msCard('Kursziel Tief',    f.targetLowPrice  ? fmt(f.targetLowPrice)  : null, 'down'),
+      msCard('Upside',           upside!=null ? `${upside>=0?'+':''}${upside.toFixed(1)}%` : null, upsideCls),
+      msCard('Anz. Analysten',   f.numAnalysts!=null ? String(f.numAnalysts) : null),
+      msCard('Short Ratio',      fmtNum(f.shortRatio)),
+      msCard('Nächste Earnings', earningsStr),
+    ]),
+    (f.sector || f.industry) ? `<div class="ms-section-title">🏭 Unternehmen</div>
+      ${msCard('Sektor',    f.sector   || null, 'ms-card-wide')}
+      ${msCard('Industrie', f.industry || null, 'ms-card-wide')}` : '',
+  ].join('');
 
   document.getElementById('modalOverlay').classList.add('visible');
   document.body.style.overflow='hidden';
