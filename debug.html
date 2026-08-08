@@ -1,0 +1,191 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Worker Debug</title>
+<style>
+  body { font-family: monospace; background: #0d1117; color: #e6edf3; padding: 16px; margin: 0; }
+  h2 { color: #58a6ff; }
+  input, select { background: #161b22; color: #e6edf3; border: 1px solid #30363d; padding: 8px 12px; border-radius: 6px; font-family: monospace; font-size: 14px; }
+  button { background: #238636; color: #fff; border: none; padding: 10px 20px; border-radius: 6px; cursor: pointer; font-size: 14px; margin-left: 8px; }
+  button:hover { background: #2ea043; }
+  .section { background: #161b22; border: 1px solid #30363d; border-radius: 8px; padding: 16px; margin-top: 16px; }
+  .section h3 { color: #79c0ff; margin: 0 0 12px; font-size: 14px; text-transform: uppercase; letter-spacing: 1px; }
+  .field { display: flex; gap: 12px; padding: 5px 0; border-bottom: 1px solid #21262d; font-size: 13px; }
+  .field:last-child { border-bottom: none; }
+  .key { color: #8b949e; min-width: 200px; }
+  .val { color: #e6edf3; }
+  .val.ok { color: #3fb950; }
+  .val.missing { color: #f85149; }
+  .val.partial { color: #d29922; }
+  pre { background: #0d1117; border: 1px solid #30363d; border-radius: 6px; padding: 12px; overflow: auto; font-size: 11px; max-height: 300px; color: #8b949e; }
+  .status { padding: 10px 16px; border-radius: 6px; margin-top: 12px; font-size: 13px; }
+  .status.ok { background: rgba(63,185,80,.1); border: 1px solid rgba(63,185,80,.3); color: #3fb950; }
+  .status.err { background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.3); color: #f85149; }
+  .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+</style>
+</head>
+<body>
+<h2>🔍 Cloudflare Worker Debug</h2>
+<p style="color:#8b949e;font-size:13px">Zeigt exakt was der Worker zurückgibt und welche Fundamentaldaten verfügbar sind.</p>
+
+<div class="row">
+  <input id="sym" value="SAP.DE" style="width:120px" placeholder="Symbol"/>
+  <select id="endpoint">
+    <option value="v8">v8/finance/chart (Candles)</option>
+    <option value="v10">v10/finance/quoteSummary (Fundamentals)</option>
+    <option value="both">Beide testen</option>
+  </select>
+  <button onclick="run()">Testen</button>
+</div>
+<div id="out"></div>
+
+<script>
+const CF = 'https://yahoo-abfrage.vitalij-bauer-t2.workers.dev';
+
+function val(v) {
+  if (v == null) return `<span class="val missing">— fehlt</span>`;
+  if (typeof v === 'object') return `<span class="val partial">${JSON.stringify(v).slice(0,60)}</span>`;
+  return `<span class="val ok">${v}</span>`;
+}
+
+function renderFields(title, fields) {
+  const rows = fields.map(([k, v]) => `<div class="field"><span class="key">${k}</span>${val(v)}</div>`).join('');
+  return `<div class="section"><h3>${title}</h3>${rows}</div>`;
+}
+
+async function testV8(sym) {
+  const end = Math.floor(Date.now()/1000), start = end - 730*86400;
+  const url = `https://query1.finance.yahoo.com/v8/finance/chart/${sym}?interval=1d&period1=${start}&period2=${end}`;
+  const proxyUrl = `${CF}?url=${encodeURIComponent(url)}`;
+  
+  let html = `<div class="section"><h3>📡 v8/finance/chart — ${sym}</h3>`;
+  html += `<div class="field"><span class="key">Request URL</span><span class="val" style="word-break:break-all;font-size:11px">${proxyUrl.slice(0,120)}…</span></div>`;
+  
+  try {
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
+    html += `<div class="field"><span class="key">HTTP Status</span>${val(res.status + ' ' + res.statusText)}</div>`;
+    
+    const json = await res.json();
+    const result = json?.chart?.result?.[0];
+    const meta = result?.meta ?? {};
+    const ts = result?.timestamp ?? [];
+    
+    html += `<div class="field"><span class="key">chart.result vorhanden</span>${val(!!result)}</div>`;
+    html += `<div class="field"><span class="key">Anzahl Candles</span>${val(ts.length)}</div>`;
+    
+    // Meta-Felder die Fundamentals enthalten könnten
+    const metaFields = [
+      ['meta.regularMarketPrice', meta.regularMarketPrice],
+      ['meta.chartPreviousClose', meta.chartPreviousClose],
+      ['meta.currency', meta.currency],
+      ['meta.exchangeName', meta.exchangeName],
+      ['meta.longName', meta.longName],
+      ['meta.shortName', meta.shortName],
+      ['meta.averageDailyVolume10Day', meta.averageDailyVolume10Day],
+      ['meta.averageDailyVolume3Month', meta.averageDailyVolume3Month],
+      ['meta.fiftyTwoWeekHigh', meta.fiftyTwoWeekHigh],
+      ['meta.fiftyTwoWeekLow', meta.fiftyTwoWeekLow],
+      ['meta.regularMarketDayHigh', meta.regularMarketDayHigh],
+      ['meta.regularMarketDayLow', meta.regularMarketDayLow],
+      ['meta.regularMarketVolume', meta.regularMarketVolume],
+      ['meta.marketCap', meta.marketCap],
+      ['meta.trailingPE', meta.trailingPE],
+    ];
+    html += `<div class="section" style="margin-top:8px;border-color:#21262d"><h3 style="color:#58a6ff">meta-Objekt (alle Felder)</h3>`;
+    metaFields.forEach(([k,v]) => { html += `<div class="field"><span class="key">${k}</span>${val(v)}</div>`; });
+    
+    // Alle meta keys anzeigen
+    html += `<div class="field"><span class="key">Alle meta keys</span><span class="val partial">${Object.keys(meta).join(', ')}</span></div>`;
+    html += `</div>`;
+    
+    // Rohdaten
+    html += `<div style="margin-top:8px"><div style="color:#8b949e;font-size:11px;margin-bottom:4px">Raw meta JSON:</div><pre>${JSON.stringify(meta, null, 2).slice(0,2000)}</pre></div>`;
+    
+  } catch(e) {
+    html += `<div class="status err">❌ Fehler: ${e.message}</div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+async function testV10(sym) {
+  const modules = 'financialData,defaultKeyStatistics,summaryDetail,assetProfile,quoteType,calendarEvents';
+  const url = `https://query1.finance.yahoo.com/v10/finance/quoteSummary/${sym}?modules=${encodeURIComponent(modules)}`;
+  const proxyUrl = `${CF}?url=${encodeURIComponent(url)}`;
+  
+  let html = `<div class="section"><h3>📡 v10/finance/quoteSummary — ${sym}</h3>`;
+  html += `<div class="field"><span class="key">Request URL</span><span class="val" style="word-break:break-all;font-size:11px">${proxyUrl.slice(0,120)}…</span></div>`;
+  
+  try {
+    const res = await fetch(proxyUrl, { signal: AbortSignal.timeout(15000) });
+    html += `<div class="field"><span class="key">HTTP Status</span>${val(res.status + ' ' + res.statusText)}</div>`;
+    
+    const json = await res.json();
+    html += `<div class="field"><span class="key">Top-level keys</span><span class="val partial">${Object.keys(json).join(', ')}</span></div>`;
+    
+    const qs = json?.quoteSummary;
+    html += `<div class="field"><span class="key">quoteSummary vorhanden</span>${val(!!qs)}</div>`;
+    html += `<div class="field"><span class="key">quoteSummary.result</span>${val(!!qs?.result)}</div>`;
+    
+    if (qs?.error) {
+      html += `<div class="status err">quoteSummary Error: ${JSON.stringify(qs.error)}</div>`;
+    }
+    
+    const r = qs?.result?.[0] ?? {};
+    html += `<div class="field"><span class="key">Module vorhanden</span><span class="val partial">${Object.keys(r).join(', ') || '— keine'}</span></div>`;
+    
+    const fin = r.financialData ?? {};
+    const sd  = r.summaryDetail ?? {};
+    const ks  = r.defaultKeyStatistics ?? {};
+    const ap  = r.assetProfile ?? {};
+    
+    const checkFields = [
+      ['financialData.currentPrice', fin.currentPrice?.raw ?? fin.currentPrice],
+      ['financialData.targetMeanPrice', fin.targetMeanPrice?.raw ?? fin.targetMeanPrice],
+      ['financialData.recommendationKey', fin.recommendationKey],
+      ['financialData.profitMargins', fin.profitMargins?.raw ?? fin.profitMargins],
+      ['financialData.revenueGrowth', fin.revenueGrowth?.raw ?? fin.revenueGrowth],
+      ['financialData.returnOnEquity', fin.returnOnEquity?.raw ?? fin.returnOnEquity],
+      ['summaryDetail.marketCap', sd.marketCap?.raw ?? sd.marketCap],
+      ['summaryDetail.trailingPE', sd.trailingPE?.raw ?? sd.trailingPE],
+      ['summaryDetail.dividendYield', sd.dividendYield?.raw ?? sd.dividendYield],
+      ['summaryDetail.beta', sd.beta?.raw ?? sd.beta],
+      ['defaultKeyStatistics.priceToBook', ks.priceToBook?.raw ?? ks.priceToBook],
+      ['defaultKeyStatistics.trailingEps', ks.trailingEps?.raw ?? ks.trailingEps],
+      ['assetProfile.sector', ap.sector],
+      ['assetProfile.industry', ap.industry],
+    ];
+    
+    html += `<div class="section" style="margin-top:8px;border-color:#21262d"><h3 style="color:#58a6ff">Fundamentaldaten Check</h3>`;
+    checkFields.forEach(([k,v]) => { html += `<div class="field"><span class="key">${k}</span>${val(v)}</div>`; });
+    html += `</div>`;
+    
+    html += `<div style="margin-top:8px"><div style="color:#8b949e;font-size:11px;margin-bottom:4px">Raw quoteSummary JSON (erste 2000 Zeichen):</div><pre>${JSON.stringify(json, null, 2).slice(0,2000)}</pre></div>`;
+    
+  } catch(e) {
+    html += `<div class="status err">❌ Fehler: ${e.message}</div>`;
+  }
+  html += '</div>';
+  return html;
+}
+
+async function run() {
+  const sym = document.getElementById('sym').value.trim().toUpperCase() || 'SAP.DE';
+  const endpoint = document.getElementById('endpoint').value;
+  const out = document.getElementById('out');
+  out.innerHTML = '<div class="status ok">⏳ Lade…</div>';
+  
+  try {
+    let html = '';
+    if (endpoint === 'v8' || endpoint === 'both') html += await testV8(sym);
+    if (endpoint === 'v10' || endpoint === 'both') html += await testV10(sym);
+    out.innerHTML = html;
+  } catch(e) {
+    out.innerHTML = `<div class="status err">❌ ${e.message}</div>`;
+  }
+}
+</script>
+</body>
+</html>
