@@ -910,14 +910,44 @@ window.doLogout = () => signOut(auth);
 // ── Firestore ─────────────────────────────────────────────────────────────────
 async function saveToFirestore(symbol, candles, metrics, fundamentals={}) {
   if (!currentUser) return;
-  await setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), {
+  const payload = {
     name: fundamentals?.longName || ALL_STOCKS[symbol]?.name || symbol,
     indices: ALL_STOCKS[symbol]?.indices ?? [],
     lastUpdated: Date.now(),
     metrics,
     fundamentals,
     candles: JSON.stringify(candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume]))
-  });
+  };
+  // User-spezifisch
+  await setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), payload);
+  // Geteilter Cache fuer alle User
+  try {
+    await setDoc(doc(db,'cache',symbol), payload);
+  } catch(e) {
+    console.warn(`Shared cache write [${symbol}]:`, e.message);
+  }
+}
+
+// Laedt Candles aus dem geteilten Cache (cache/{symbol})
+async function loadFromSharedCache(symbol) {
+  try {
+    const snap = await getDoc(doc(db,'cache',symbol));
+    if (!snap.exists()) return null;
+    const raw = snap.data();
+    const candles = JSON.parse(raw.candles||'[]')
+      .map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]}));
+    if (!candles.length) return null;
+    return {
+      candles,
+      metrics:      raw.metrics      ?? null,
+      fundamentals: raw.fundamentals ?? {},
+      lastUpdated:  raw.lastUpdated  ?? 0,
+      name:         raw.name         ?? symbol,
+    };
+  } catch(e) {
+    console.warn(`Shared cache read [${symbol}]:`, e.message);
+    return null;
+  }
 }
 
 async function loadFromFirestore() {
@@ -1336,7 +1366,33 @@ window.loadAllData = async () => {
   const total = toLoad.length;
 
   try {
-    // ── Ein Loop, ein Request pro Symbol: Candles + Fundamentals kombiniert ──
+    // ── Schritt 1: Geteilten Cache fuer alle Symbole laden (parallel, kein Yahoo-Request) ──
+    const CACHE_BATCH = 20;
+    for(let i=0; i<needsLoad.length; i+=CACHE_BATCH) {
+      const chunk = needsLoad.slice(i, i+CACHE_BATCH);
+      await Promise.all(chunk.map(async sym => {
+        if (stockData[sym]?.candles?.length) return; // bereits im Speicher
+        const cached = await loadFromSharedCache(sym);
+        if (cached) {
+          stockData[sym] = {
+            candles:      cached.candles,
+            metrics:      cached.metrics ?? computeMetrics(cached.candles),
+            fundamentals: cached.fundamentals,
+            name:         cached.name,
+            indices:      ALL_STOCKS[sym]?.indices ?? [],
+            lastUpdated:  cached.lastUpdated,
+          };
+        }
+      }));
+    }
+    // Nach Cache-Load direkt anzeigen (User sieht sofort Daten)
+    const cachedCount = Object.keys(stockData).length;
+    if (cachedCount > 0) {
+      applyCurrentFilter();
+      document.getElementById('filterSection').classList.add('visible');
+    }
+
+    // ── Schritt 2: Nur fehlende/veraltete Tage von Yahoo nachladen ──
     const BATCH = 10;
     for(let i=0; i<needsLoad.length; i+=BATCH) {
       const chunk = needsLoad.slice(i, i+BATCH);
@@ -1348,7 +1404,6 @@ window.loadAllData = async () => {
           const candles = mergeCandles(stockData[sym]?.candles, fresh);
           const metrics = computeMetrics(candles);
           const info = ALL_STOCKS[sym] ?? {name:sym, indices:[]};
-          // Bestehende Fundamentals behalten falls neue leer sind
           const mergedFund = Object.keys(fund).some(k=>fund[k]!=null)
             ? fund
             : (stockData[sym]?.fundamentals ?? {});
