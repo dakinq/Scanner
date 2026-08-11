@@ -817,24 +817,41 @@ function defaultTvSymbol(sym) {
 }
 
 // Build flat index map
-const ALL_STOCKS = {};
-Object.entries(STOCKS).forEach(([idx, list]) => {
-  list.forEach(({s,n,tv}) => {
-    if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [], tv: tv || defaultTvSymbol(s) };
-    else if (tv) ALL_STOCKS[s].tv = tv;
-    if (!ALL_STOCKS[s].indices.includes(idx)) ALL_STOCKS[s].indices.push(idx);
+// ALL_STOCKS wird dynamisch aus Firestore befüllt
+let ALL_STOCKS = {};
+
+// Standard-Labels für bekannte Indizes
+const INDEX_LABELS = {
+  DAX:'DAX', EUROSTOXX:'EuroStoxx', SMI:'SMI', FTSE100:'FTSE 100',
+  NASDAQ100:'NASDAQ 100', SP500:'S&P 500', NIKKEI225:'Nikkei 225',
+  HANGSENG:'Hang Seng', INDICES:'Indizes', COMMODITIES:'Rohstoffe'
+};
+
+function rebuildAllStocks(stocks) {
+  ALL_STOCKS = {};
+  Object.entries(stocks).forEach(([idx, list]) => {
+    list.forEach(({s,n,tv}) => {
+      if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [], tv: tv || defaultTvSymbol(s) };
+      else if (tv) ALL_STOCKS[s].tv = tv;
+      if (!ALL_STOCKS[s].indices.includes(idx)) ALL_STOCKS[s].indices.push(idx);
+    });
   });
-});
+}
+
+// Initiale Befüllung aus hardcodierten STOCKS (Fallback falls Firestore leer)
+rebuildAllStocks(STOCKS);
 
 // ── State ────────────────────────────────────────────────────────────────────
 let stockData    = {};
 let filteredSyms = [];
-let activeFilters = new Set(); // leeres Set = alle anzeigen
+let activeFilters = new Set();
 let activeIndex  = 'ALL';
 let activeCharts = {};
 let modalChartInst = null;
 let currentUser  = null;
 let isLoading    = false;
+let isAdmin      = false;
+let customTabs   = {}; // persönliche Reiter des Users
 
 // ── Cloudflare Worker Proxy ───────────────────────────────────────────────────
 // Deploy worker.js to Cloudflare and paste your worker URL here:
@@ -889,6 +906,22 @@ onAuthStateChanged(auth, async user => {
   if (user) {
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appShell').style.display='flex';
+
+    // Admin prüfen
+    try {
+      const adminSnap = await getDoc(doc(db,'config','admins'));
+      isAdmin = adminSnap.exists() && (adminSnap.data().uids||[]).includes(user.uid);
+    } catch(e) { isAdmin = false; }
+
+    // Aktien-Liste aus Firestore laden (überschreibt hardcodierte STOCKS)
+    await loadStocksFromFirestore();
+
+    // Custom-Tabs laden
+    await loadCustomTabs();
+
+    // Tabs rendern
+    renderIndexTabs();
+
     await seLoadCustomFromFirestore();
     await loadErrorsFromFirestore();
     loadFromFirestore();
@@ -898,6 +931,7 @@ onAuthStateChanged(auth, async user => {
   } else {
     document.getElementById('loginScreen').style.display='flex';
     document.getElementById('appShell').style.display='none';
+    isAdmin = false;
   }
 });
 
@@ -947,6 +981,151 @@ async function loadFromSharedCache(symbol) {
   } catch(e) {
     console.warn(`Shared cache read [${symbol}]:`, e.message);
     return null;
+  }
+}
+
+// ── Aktien-Liste aus Firestore laden ────────────────────────────────────────
+async function loadStocksFromFirestore() {
+  try {
+    const indexSnap = await getDoc(doc(db,'config','stocks_index'));
+    if (!indexSnap.exists()) return; // Noch nicht initialisiert → hardcodierte STOCKS bleiben
+    const sections = indexSnap.data().sections || [];
+    const firestoreStocks = {};
+    await Promise.all(sections.map(async section => {
+      const snap = await getDoc(doc(db,'config','stocks_'+section));
+      if (snap.exists()) firestoreStocks[section] = snap.data().stocks || [];
+    }));
+    if (Object.keys(firestoreStocks).length > 0) {
+      rebuildAllStocks(firestoreStocks);
+      console.log('Aktien-Liste aus Firestore geladen:', Object.keys(firestoreStocks));
+    }
+  } catch(e) {
+    console.warn('loadStocksFromFirestore:', e.message);
+  }
+}
+
+// ── Custom-Tabs laden & speichern ────────────────────────────────────────────
+async function loadCustomTabs() {
+  if (!currentUser) return;
+  try {
+    const snap = await getDocs(collection(db,'users',currentUser.uid,'customTabs'));
+    customTabs = {};
+    snap.forEach(d => { customTabs[d.id] = d.data(); });
+    // Custom-Tabs auch in ALL_STOCKS einbauen
+    Object.entries(customTabs).forEach(([tabId, tab]) => {
+      (tab.stocks||[]).forEach(({s,n}) => {
+        if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [], tv: defaultTvSymbol(s) };
+        if (!ALL_STOCKS[s].indices.includes(tabId)) ALL_STOCKS[s].indices.push(tabId);
+      });
+    });
+  } catch(e) {
+    console.warn('loadCustomTabs:', e.message);
+  }
+}
+
+async function saveCustomTab(tabId, tabData) {
+  if (!currentUser) return;
+  await setDoc(doc(db,'users',currentUser.uid,'customTabs',tabId), tabData);
+  customTabs[tabId] = tabData;
+  // ALL_STOCKS aktualisieren
+  (tabData.stocks||[]).forEach(({s,n}) => {
+    if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [], tv: defaultTvSymbol(s) };
+    if (!ALL_STOCKS[s].indices.includes(tabId)) ALL_STOCKS[s].indices.push(tabId);
+  });
+  renderIndexTabs();
+}
+
+async function deleteCustomTab(tabId) {
+  if (!currentUser) return;
+  await deleteDoc(doc(db,'users',currentUser.uid,'customTabs',tabId));
+  delete customTabs[tabId];
+  if (activeIndex === tabId) { activeIndex = 'ALL'; }
+  renderIndexTabs();
+  applyCurrentFilter();
+}
+
+// ── Index-Tabs dynamisch rendern ─────────────────────────────────────────────
+function renderIndexTabs() {
+  const container = document.getElementById('idxTabsContainer');
+  if (!container) return;
+
+  // Standard-Tabs (aus ALL_STOCKS Sektionen)
+  const standardSections = [...new Set(Object.values(ALL_STOCKS).flatMap(s=>s.indices))]
+    .filter(idx => !customTabs[idx]);
+
+  let html = `<div class="idx-chip ${activeIndex==='ALL'?'active':''}" onclick="setIndex('ALL',this)">Alle</div>`;
+
+  standardSections.forEach(idx => {
+    const label = INDEX_LABELS[idx] || idx;
+    const active = activeIndex===idx ? 'active' : '';
+    html += `<div class="idx-chip ${active}" onclick="setIndex('${idx}',this)">${label}</div>`;
+  });
+
+  // Custom-Tabs
+  Object.entries(customTabs).forEach(([tabId, tab]) => {
+    const active = activeIndex===tabId ? 'active' : '';
+    html += `<div class="idx-chip custom-tab ${active}" onclick="setIndex('${tabId}',this)">
+      ${tab.name}
+      <span class="custom-tab-del" onclick="event.stopPropagation();confirmDeleteTab('${tabId}')">✕</span>
+    </div>`;
+  });
+
+  // Tab hinzufügen Button
+  html += `<div class="idx-chip idx-add-btn" onclick="openAddTabModal()" title="Eigenen Reiter erstellen">＋</div>`;
+
+  container.innerHTML = html;
+}
+
+// ── Custom Tab Modal ──────────────────────────────────────────────────────────
+function openAddTabModal() {
+  const existing = document.getElementById('addTabModal');
+  if (existing) existing.remove();
+
+  const modal = document.createElement('div');
+  modal.id = 'addTabModal';
+  modal.style.cssText = 'position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;display:flex;align-items:flex-end;';
+  modal.innerHTML = `
+    <div style="background:#161b22;border-radius:16px 16px 0 0;padding:20px;width:100%;max-height:80vh;overflow-y:auto;">
+      <div style="font-size:16px;font-weight:700;color:#e6edf3;margin-bottom:16px">Eigenen Reiter erstellen</div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;color:#8b949e;margin-bottom:4px">Name des Reiters</div>
+        <input id="tabNameInput" placeholder="z.B. Meine Tech-Aktien" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:10px 12px;border-radius:8px;font-size:14px;box-sizing:border-box">
+      </div>
+      <div style="margin-bottom:12px">
+        <div style="font-size:12px;color:#8b949e;margin-bottom:4px">Aktien (Symbol · Name, eine pro Zeile)</div>
+        <textarea id="tabStocksInput" placeholder="AAPL · Apple&#10;SAP.DE · SAP&#10;NESN.SW · Nestlé" style="width:100%;background:#0d1117;border:1px solid #30363d;color:#e6edf3;padding:10px 12px;border-radius:8px;font-size:13px;height:140px;box-sizing:border-box;resize:vertical;font-family:monospace"></textarea>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px">
+        <button onclick="saveNewTab()" style="flex:1;background:#238636;color:#fff;border:none;padding:12px;border-radius:8px;font-size:14px;font-weight:600;cursor:pointer">Speichern</button>
+        <button onclick="document.getElementById('addTabModal').remove()" style="flex:1;background:#21262d;color:#e6edf3;border:1px solid #30363d;padding:12px;border-radius:8px;font-size:14px;cursor:pointer">Abbrechen</button>
+      </div>
+      <div id="tabSaveStatus" style="margin-top:8px;font-size:13px;color:#f85149;display:none"></div>
+    </div>`;
+  document.body.appendChild(modal);
+}
+
+async function saveNewTab() {
+  const name = document.getElementById('tabNameInput').value.trim();
+  const raw  = document.getElementById('tabStocksInput').value.trim();
+  const status = document.getElementById('tabSaveStatus');
+
+  if (!name) { status.textContent='Bitte einen Namen eingeben.'; status.style.display='block'; return; }
+
+  const stocks = raw.split('\n').map(line => {
+    const parts = line.split(/[·\t,]/).map(p=>p.trim()).filter(Boolean);
+    return parts.length >= 2 ? {s: parts[0].toUpperCase(), n: parts[1]} : null;
+  }).filter(Boolean);
+
+  if (!stocks.length) { status.textContent='Bitte mindestens eine Aktie eingeben (Symbol · Name).'; status.style.display='block'; return; }
+
+  const tabId = 'custom_' + Date.now();
+  await saveCustomTab(tabId, { name, stocks, createdAt: Date.now() });
+  document.getElementById('addTabModal').remove();
+}
+
+function confirmDeleteTab(tabId) {
+  if (confirm(`Reiter "${customTabs[tabId]?.name}" löschen?`)) {
+    deleteCustomTab(tabId);
   }
 }
 
@@ -1348,7 +1527,8 @@ window.loadAllData = async () => {
   document.getElementById('loadBtn').disabled=true;
   document.getElementById('errorMsg').classList.remove('visible');
   showProgress(true);
-  const idxFilter = activeIndex==='ALL' ? Object.keys(STOCKS) : [activeIndex];
+  const allSections = [...new Set(Object.values(ALL_STOCKS).flatMap(s=>s.indices))];
+  const idxFilter = activeIndex==='ALL' ? allSections : [activeIndex];
   const toLoad=[];
   idxFilter.forEach(idx=>STOCKS[idx].forEach(({s})=>{ if(!toLoad.includes(s)) toLoad.push(s); }));
 
@@ -1569,7 +1749,19 @@ const FP_VARS = [
   { name: 'bb_lower',   insert: 'bb_lower',       desc: 'Unteres Bollinger Band (MA20 - 2x Standardabweichung) — Kurs darunter gilt als überverkauft',   example: 'close < bb_lower && rsi < 35' },
   { name: 'gap',        insert: 'gap',            desc: 'Gap in % zwischen heutigem Open und gestrigem Close — positiv = Gap-up, negativ = Gap-down',    example: 'gap > 2' },
   { name: 'body',       insert: 'body',           desc: 'Kerzenkörper in % (|close - open| / open x 100) — groß bedeutet starke Tagesbewegung',         example: 'body > 3 && close > open' },
-  { name: 'range()',    insert: 'range(20, 5)',    desc: 'Konsolidierung: alle Schlusskurse der letzten X Tage innerhalb +-Y% des aktuellen Kurses',      example: 'range(20, 5) && rsi < 50' },
+  { name: 'range()',           insert: 'range(20, 5)',          desc: 'Konsolidierung: alle Schlusskurse der letzten X Tage innerhalb +-Y% des aktuellen Kurses',      example: 'range(20, 5) && rsi < 50' },
+  { name: 'wave(n, days)',      insert: 'wave(3, 60)',                 desc: 'Elliott-Welle: erkennt ob die Aktie sich grob in der angegebenen Welle befindet. n = Wellennummer (1–5, A, B, C), days = Analysefenster in Handelstagen. Welle 3 ist meist die stärkste und längste Impulswelle.', example: 'wave(3, 60)' },
+  { name: 'fib_retracement()', insert: 'fib_retracement(61.8, 50, 2)',  desc: 'Fibonacci Retracement: prüft ob der aktuelle Kurs auf einem Fibonacci-Korrekturlevel liegt. level = Fibonacci-Level in % (23.6, 38.2, 50, 61.8, 78.6), days = Swing-Fenster in Tagen, tolerance = Toleranz in %. Nützlich um Einstiegspunkte nach einer Korrektur zu finden.', example: 'fib_retracement(61.8, 50, 2) && rsi < 50' },
+  { name: 'fib_extension()',   insert: 'fib_extension(161.8, 50, 2)',   desc: 'Fibonacci Extension: prüft ob der aktuelle Kurs ein Kursziel einer Impulswelle erreicht hat. level = Extension-Level in % (100, 138.2, 161.8, 261.8), days = Swing-Fenster in Tagen, tolerance = Toleranz in %. Nützlich um Kursziele von Welle 3 oder 5 zu identifizieren.', example: 'fib_extension(161.8, 50, 2)' },
+  { name: 'squeeze(p,bb,k)',   insert: 'squeeze(20, 2.0, 1.5)',         desc: 'Bollinger Squeeze: true wenn Bollinger Bands innerhalb der Keltner Channels liegen — zeigt aufgestaute Energie vor einem Ausbruch an. p = MA-Periode (Standard 20), bb = Bollinger-Multiplikator (Standard 2.0 Standardabweichungen), k = Keltner-Multiplikator (Standard 1.5x ATR). Enger Squeeze (k klein) = starke Kompression.', example: 'squeeze(20, 2.0, 1.5) && rvol > 1.5' },
+  { name: 'breakout(n)',       insert: 'breakout(50)',                  desc: 'Ausbruch: Kurs bricht über das n-Tage-Hoch mit mindestens 20% überdurchschnittlichem Volumen. n = Lookback-Periode in Tagen.', example: 'breakout(50) && rsi > 50' },
+  { name: 'doji',              insert: 'doji',                          desc: 'Doji-Kerze: Kerzenkörper kleiner als 10% der Gesamtrange — signalisiert Unentschlossenheit und mögliche Trendwende. Kein Parameter nötig.', example: 'doji && rsi < 40' },
+  { name: 'hammer',            insert: 'hammer',                        desc: 'Hammer: langer unterer Docht (mind. 2x Körperlänge), kleiner oberer Docht, im Abwärtstrend — klassisches Umkehrsignal nach unten. Kein Parameter nötig.', example: 'hammer && fib_retracement(61.8, 50, 3)' },
+  { name: 'engulfing',         insert: 'engulfing',                     desc: 'Engulfing-Kerze: heutige Kerze verschluckt die gestrige komplett (bullish oder bearish) — starkes Umkehrsignal. Kein Parameter nötig.', example: 'engulfing && volume > avgvol(20) * 1.3' },
+  { name: 'consec(n)',         insert: 'consec(3)',                     desc: 'Consecutive: mindestens n aufeinanderfolgende grüne oder rote Tage — zeigt kurzfristigen Momentum. n = Anzahl Tage.', example: 'consec(3) && rvol > 1.5' },
+  { name: 'nearma(p, pct)',    insert: 'nearma(50, 2)',                 desc: 'Near MA: Kurs liegt innerhalb ±pct% des gleitenden Durchschnitts — ideal um Pullbacks ans gleitende Mittel zu finden. p = MA-Periode, pct = Toleranz in %.', example: 'nearma(50, 2) && rsi < 45' },
+  { name: 'trend(n)',          insert: 'trend(20)',                     desc: 'Trendstärke: Anteil grüner Kerzen in den letzten n Tagen in % (0–100). 70+ = starker Aufwärtstrend, 30- = starker Abwärtstrend.', example: 'trend(20) > 70 && close > ma(50)' },
+  { name: 'rs(n)',             insert: 'rs(50)',                        desc: 'Relative Stärke: Performance dieser Aktie über n Tage minus Durchschnitt aller geladenen Aktien. Positiv = outperformt den Scanner, negativ = underperformt.', example: 'rs(50) > 10 && trend(20) > 60' },
 ];
 
 const FP_OPS = [
@@ -1651,6 +1843,137 @@ window.deleteFilterFavorite = async () => {
 
 
 
+
+// ── Elliott Wellen & Fibonacci Hilfsfunktionen ───────────────────────────────
+
+// Pivot-Hochs und -Tiefs finden (mind. `wing` Kerzen links und rechts)
+function findPivots(candles, wing=5) {
+  const highs=[], lows=[];
+  for (let i=wing; i<candles.length-wing; i++) {
+    const slice = candles.slice(i-wing, i+wing+1);
+    const h = candles[i].high, l = candles[i].low;
+    if (slice.every(c=>c.high<=h) && slice.filter(c=>c.high===h).length===1) highs.push({i, price:h, time:candles[i].time});
+    if (slice.every(c=>c.low>=l)  && slice.filter(c=>c.low===l).length===1)  lows.push({i, price:l, time:candles[i].time});
+  }
+  return {highs, lows};
+}
+
+// Fibonacci Retracement:
+// Sucht im letzten `days` Fenster den stärksten Swing (Hoch→Tief oder Tief→Hoch)
+// und prüft ob der aktuelle Kurs auf dem gesuchten Level ±tolerance% liegt.
+// fib_retracement(61.8, 50, 2) → 61.8% Retracement über 50 Tage, ±2% Toleranz
+function calcFibRetracement(candles, level, days, tolerance) {
+  const slice = candles.slice(-Math.max(days,10));
+  if (slice.length < 10) return false;
+  const close = candles[candles.length-1].close;
+  const hi = Math.max(...slice.map(c=>c.high));
+  const lo = Math.min(...slice.map(c=>c.low));
+  const swing = hi - lo;
+  if (swing <= 0) return false;
+  // Retracement von Hoch nach Tief (Aufwärtstrend der korrigiert)
+  const retDown = hi - swing * (level/100);
+  // Retracement von Tief nach Hoch (Abwärtstrend der korrigiert)
+  const retUp   = lo + swing * (level/100);
+  const tol = swing * (tolerance/100);
+  return Math.abs(close - retDown) <= tol || Math.abs(close - retUp) <= tol;
+}
+
+// Fibonacci Extension:
+// Sucht Welle1 (erster Swing im Fenster) und berechnet das Extension-Ziel.
+// Prüft ob der aktuelle Kurs auf dem Extension-Level ±tolerance% liegt.
+// fib_extension(161.8, 50, 2) → 161.8% Extension über 50 Tage, ±2% Toleranz
+function calcFibExtension(candles, level, days, tolerance) {
+  const slice = candles.slice(-Math.max(days,10));
+  if (slice.length < 10) return false;
+  const close = candles[candles.length-1].close;
+  // Erste Hälfte = Welle 1, zweite Hälfte = Korrektur + aktuell
+  const half = Math.floor(slice.length/2);
+  const wave1Hi = Math.max(...slice.slice(0,half).map(c=>c.high));
+  const wave1Lo = Math.min(...slice.slice(0,half).map(c=>c.low));
+  const corrLo  = Math.min(...slice.slice(half).map(c=>c.low));
+  const corrHi  = Math.max(...slice.slice(half).map(c=>c.high));
+  const wave1Len = wave1Hi - wave1Lo;
+  if (wave1Len <= 0) return false;
+  // Aufwärts-Extension: Korrekturtief + Welle1Länge * level/100
+  const extUp   = corrLo + wave1Len * (level/100);
+  // Abwärts-Extension: Korrekturhoch - Welle1Länge * level/100
+  const extDown = corrHi - wave1Len * (level/100);
+  const tol = wave1Len * (tolerance/100);
+  return Math.abs(close - extUp) <= tol || Math.abs(close - extDown) <= tol;
+}
+
+// Elliott Wellen Erkennung:
+// Analysiert Pivot-Punkte im letzten `days` Fenster und versucht die aktuelle
+// Wellenposition zu bestimmen. Gibt true zurück wenn die gesuchte Welle erkannt wird.
+// wave(3, 60) → sucht Welle 3 in den letzten 60 Handelstagen
+function detectElliottWave(candles, waveLabel, days) {
+  const slice = candles.slice(-Math.max(days,20));
+  if (slice.length < 20) return false;
+  const wing = Math.max(3, Math.floor(slice.length/10));
+  const {highs, lows} = findPivots(slice, wing);
+  if (highs.length < 2 || lows.length < 2) return false;
+
+  // Letzte 3 Pivots als Grundlage (alternierend Hoch/Tief)
+  // Alle Pivots zusammenführen und nach Index sortieren
+  const all = [
+    ...highs.map(p=>({...p, type:'H'})),
+    ...lows.map(p=>({...p,  type:'L'}))
+  ].sort((a,b)=>a.i-b.i);
+
+  // Doppelte entfernen (zu nahe beieinander)
+  const filtered = [];
+  for (const p of all) {
+    const last = filtered[filtered.length-1];
+    if (!last || p.i - last.i >= wing) filtered.push(p);
+    else if (p.type==='H' && last.type==='H' && p.price>last.price) filtered[filtered.length-1]=p;
+    else if (p.type==='L' && last.type==='L' && p.price<last.price) filtered[filtered.length-1]=p;
+  }
+
+  const close = slice[slice.length-1].close;
+  const n = filtered.length;
+  if (n < 3) return false;
+
+  // Trend bestimmen: letzter Pivot Hoch → Aufwärtstrend, Tief → Abwärtstrend
+  const lastPivot = filtered[n-1];
+  const uptrend = lastPivot.type === 'H';
+
+  // Wellenposition aus Anzahl der Pivots ableiten
+  // In einem Aufwärtstrend: L H L H L H = Wellen 0,1,2,3,4,5
+  // Position = Anzahl Pivots vom Trendstart
+  const waveNum = n % 2 === (uptrend ? 1 : 0) ? n : n-1;
+
+  // Numerische Wellen 1-5
+  const numLabel = String(waveLabel).toUpperCase();
+  const waveMap = uptrend
+    ? { '1': 1, '2': 2, '3': 3, '4': 4, '5': 5, 'A': 2, 'B': 3, 'C': 4 }
+    : { 'A': 1, 'B': 2, 'C': 3, '1': 4, '2': 5 };
+
+  const targetWave = waveMap[numLabel];
+  if (!targetWave) return false;
+
+  // Aktuelle Position grob einschätzen (±1 Welle Toleranz)
+  const pos = Math.min(waveNum, 5);
+  if (Math.abs(pos - targetWave) > 1) return false;
+
+  // Zusätzliche Validierung für Welle 3 (muss größer als Welle 1 sein)
+  if (numLabel === '3' && n >= 4) {
+    const w1 = Math.abs(filtered[1].price - filtered[0].price);
+    const w3 = Math.abs(filtered[3 < n ? 3 : n-1].price - filtered[2 < n ? 2 : n-2].price);
+    if (w3 < w1) return false;
+  }
+
+  // Welle 2/4: Kurs muss sich in Korrekturzone befinden (zwischen letzten 2 Pivots)
+  if (numLabel === '2' || numLabel === '4' || numLabel === 'B') {
+    const p1 = filtered[n-2]?.price, p2 = filtered[n-1]?.price;
+    if (p1 && p2) {
+      const lo2 = Math.min(p1,p2), hi2 = Math.max(p1,p2);
+      if (close < lo2 || close > hi2) return false;
+    }
+  }
+
+  return true;
+}
+
 function evalExpr(expr, m, candles) {
   try {
     const cl = candles.map(c => c.close);
@@ -1720,6 +2043,108 @@ function evalExpr(expr, m, candles) {
     const gapVal = candles.length >= 2 ? ((op[op.length - 1] - cl[cl.length - 2]) / cl[cl.length - 2]) * 100 : null;
     const bodyVal = op[op.length - 1] ? (Math.abs(cl[cl.length - 1] - op[op.length - 1]) / op[op.length - 1]) * 100 : null;
 
+    const waveFunc       = (label, days=60)        => detectElliottWave(candles, label, days);
+    const fibRetFunc     = (level, days=50, tol=2) => calcFibRetracement(candles, level, days, tol);
+    const fibExtFunc     = (level, days=50, tol=2) => calcFibExtension(candles, level, days, tol);
+
+    // ── Squeeze: Bollinger Bands innerhalb Keltner Channels ──
+    // squeeze(period=20, bbMult=2.0, keltnerMult=1.5)
+    const squeezeFunc = (period=20, bbMult=2.0, keltnerMult=1.5) => {
+      if (candles.length < period) return false;
+      const ma    = calcMA(cl, period);
+      if (!ma) return false;
+      const slice = cl.slice(-period);
+      const std   = Math.sqrt(slice.reduce((s,v)=>(s+(v-ma)**2),0)/period);
+      const bbU   = ma + bbMult * std;
+      const bbL   = ma - bbMult * std;
+      const trs   = [];
+      for (let i = Math.max(1, candles.length-period); i < candles.length; i++)
+        trs.push(Math.max(hi[i]-lo[i], Math.abs(hi[i]-cl[i-1]), Math.abs(lo[i]-cl[i-1])));
+      const atr = trs.length ? trs.reduce((a,b)=>a+b,0)/trs.length : null;
+      if (!atr) return false;
+      const kU = ma + keltnerMult * atr;
+      const kL = ma - keltnerMult * atr;
+      return bbU < kU && bbL > kL;
+    };
+
+    // ── Breakout: Kurs bricht über n-Tage-Hoch mit erhöhtem Volumen ──
+    const breakoutFunc = (n=50) => {
+      if (candles.length < n+1) return false;
+      const slice = candles.slice(-n-1, -1); // letzte n Tage ohne heute
+      const prevHigh = Math.max(...slice.map(c => c.high));
+      const avgVol   = slice.map(c=>c.volume).reduce((a,b)=>a+b,0) / slice.length;
+      return m.close > prevHigh && vol[vol.length-1] > avgVol * 1.2;
+    };
+
+    // ── Kerzenmuster ──
+    const last  = candles[candles.length-1];
+    const prev  = candles[candles.length-2] ?? last;
+    const last2 = candles[candles.length-3] ?? prev;
+    const cBody    = Math.abs(last.close  - last.open);
+    const cRange   = last.high - last.low;
+    const pBody    = Math.abs(prev.close  - prev.open);
+    const pRange   = prev.high - prev.low;
+
+    // Doji: Körper < 10% der Gesamtrange
+    const dojiVal = cRange > 0 && (cBody / cRange) < 0.1;
+
+    // Hammer: unterer Docht > 2x Körper, oberer Docht klein, im Abwärtstrend
+    const hammerVal = (() => {
+      const lowerWick = Math.min(last.open, last.close) - last.low;
+      const upperWick = last.high - Math.max(last.open, last.close);
+      const downtrend = cl[cl.length-1] < calcMA(cl, 10);
+      return lowerWick > 2 * cBody && upperWick < cBody * 0.5 && cRange > 0 && downtrend;
+    })();
+
+    // Engulfing bullish: heute grün und verschluckt gestrige rote Kerze
+    // Engulfing bearish: heute rot und verschluckt gestrige grüne Kerze
+    const engulfingVal = (() => {
+      const bullish = last.close > last.open && prev.close < prev.open
+        && last.open < prev.close && last.close > prev.open;
+      const bearish = last.close < last.open && prev.close > prev.open
+        && last.open > prev.close && last.close < prev.open;
+      return bullish || bearish;
+    })();
+
+    // ── Consecutive: n aufeinanderfolgende grüne oder rote Tage ──
+    const consecFunc = (n=3) => {
+      if (candles.length < n+1) return false;
+      const slice = candles.slice(-n);
+      const allGreen = slice.every(c => c.close > c.open);
+      const allRed   = slice.every(c => c.close < c.open);
+      return allGreen || allRed;
+    };
+
+    // ── Near MA: Kurs innerhalb ±pct% des gleitenden Durchschnitts ──
+    const nearmaFunc = (period=50, pct=2) => {
+      const maVal = calcMA(cl, period);
+      if (!maVal || !m.close) return false;
+      return Math.abs(m.close - maVal) / maVal * 100 <= pct;
+    };
+
+    // ── Trend: Anteil grüner Tage in letzten n Tagen (0-100) ──
+    const trendFunc = (n=20) => {
+      const slice = candles.slice(-Math.max(n,1));
+      if (!slice.length) return 0;
+      const green = slice.filter(c => c.close > c.open).length;
+      return (green / slice.length) * 100;
+    };
+
+    // ── RS: Relative Stärke dieser Aktie vs. Durchschnitt aller geladenen Aktien ──
+    const rsFunc = (n=50) => {
+      const myChange = cl.length >= n ? ((cl[cl.length-1] - cl[cl.length-1-n]) / cl[cl.length-1-n]) * 100 : null;
+      if (myChange === null) return null;
+      const allChanges = Object.values(stockData)
+        .map(d => {
+          const c = d.candles?.map(x=>x.close) ?? [];
+          return c.length >= n ? ((c[c.length-1] - c[c.length-1-n]) / c[c.length-1-n]) * 100 : null;
+        })
+        .filter(v => v !== null);
+      if (!allChanges.length) return null;
+      const avg = allChanges.reduce((a,b)=>a+b,0) / allChanges.length;
+      return myChange - avg;
+    };
+
     return !!(new Function(
       'close','open','high','low','volume',
       'rsi','high52w','low52w',
@@ -1728,6 +2153,9 @@ function evalExpr(expr, m, candles) {
       'macd','signal',
       'atr','bb_upper','bb_lower',
       'gap','body',
+      'wave','fib_retracement','fib_extension',
+      'squeeze','breakout','doji','hammer','engulfing',
+      'consec','nearma','trend','rs',
       `return !!(${expr})`
     )(
       m.close, m.open, m.high, m.low, m.volume,
@@ -1736,14 +2164,17 @@ function evalExpr(expr, m, candles) {
       avgvolFunc, rvolVal, abovemaFunc,
       macdLine, signalLine,
       atrFunc, bbUpper, bbLower,
-      gapVal, bodyVal
+      gapVal, bodyVal,
+      waveFunc, fibRetFunc, fibExtFunc,
+      squeezeFunc, breakoutFunc, dojiVal, hammerVal, engulfingVal,
+      consecFunc, nearmaFunc, trendFunc, rsFunc
     ));
   } catch { return false; }
 }
 
 function applyCurrentFilter() {
   let syms=Object.keys(stockData);
-  if(activeIndex!=='ALL') syms=syms.filter(s=>(stockData[s].indices||[]).includes(activeIndex));
+  if(activeIndex!=='ALL') syms=syms.filter(s=>(stockData[s].indices||[]).includes(activeIndex)||(ALL_STOCKS[s]?.indices||[]).includes(activeIndex));
   syms=syms.filter(sym=>{
     const m=stockData[sym].metrics;
     const candles=stockData[sym].candles||[];
@@ -2199,8 +2630,8 @@ document.addEventListener('click', () => {
 });
 
 // ── Stock Editor ──────────────────────────────────────────────────────────────
-const SE_INDICES = ['DAX','EUROSTOXX','SMI','FTSE100','NASDAQ100','SP500','NIKKEI225','HANGSENG'];
-const SE_LABELS  = {DAX:'DAX',EUROSTOXX:'EuroStoxx',SMI:'SMI',FTSE100:'FTSE 100',NASDAQ100:'NASDAQ 100',SP500:'S&P 500',NIKKEI225:'Nikkei 225',HANGSENG:'Hang Seng'};
+const SE_INDICES = ['DAX','EUROSTOXX','SMI','FTSE100','NASDAQ100','SP500','NIKKEI225','HANGSENG','INDICES','COMMODITIES'];
+const SE_LABELS  = {DAX:'DAX',EUROSTOXX:'EuroStoxx',SMI:'SMI',FTSE100:'FTSE 100',NASDAQ100:'NASDAQ 100',SP500:'S&P 500',NIKKEI225:'Nikkei 225',HANGSENG:'Hang Seng',INDICES:'Indizes',COMMODITIES:'Rohstoffe'};
 let seActiveIndex = 'DAX';
 let seErrorFilter = false;
 let seLastErrors  = [];
@@ -2642,6 +3073,11 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .idx-tabs{display:flex;gap:6px;overflow-x:auto;padding:10px 14px;border-bottom:1px solid var(--border);scrollbar-width:none}
 .idx-tabs::-webkit-scrollbar{display:none}
 .idx-chip{flex-shrink:0;padding:5px 12px;border-radius:20px;border:1px solid var(--border);background:var(--surf);color:var(--muted);font-size:12px;font-weight:600;cursor:pointer}
+.custom-tab{display:flex;align-items:center;gap:6px}
+.custom-tab-del{font-size:10px;opacity:.6;padding:1px 3px;border-radius:3px}
+.custom-tab-del:hover{opacity:1;background:rgba(248,81,73,.2);color:#f85149}
+.idx-add-btn{background:transparent;border:1px dashed #30363d;color:#8b949e}
+.idx-add-btn:hover{border-color:#58a6ff;color:#58a6ff}
 .idx-chip.active{border-color:var(--accent);background:rgba(37,99,235,.15);color:var(--accent)}
 .filter-section{display:none;padding:10px 14px;border-bottom:1px solid var(--border)}
 .filter-section.visible{display:block}
@@ -2780,7 +3216,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     </div>
   </header>
 
-  <div class="idx-tabs">
+  <div class="idx-tabs" id="idxTabsContainer">
     <div class="idx-chip active" onclick="setIndex('ALL',this)">Alle</div>
     <div class="idx-chip" onclick="setIndex('DAX',this)">DAX</div>
     <div class="idx-chip" onclick="setIndex('EUROSTOXX',this)">EuroStoxx</div>
@@ -2790,6 +3226,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     <div class="idx-chip" onclick="setIndex('SP500',this)">S&amp;P 500</div>
     <div class="idx-chip" onclick="setIndex('NIKKEI225',this)">Nikkei 225</div>
     <div class="idx-chip" onclick="setIndex('HANGSENG',this)">Hang Seng</div>
+    <div class="idx-chip idx-add-btn" onclick="openAddTabModal()" title="Eigenen Reiter erstellen">＋</div>
   </div>
 
   <div class="filter-section" id="filterSection">
