@@ -991,10 +991,30 @@ async function loadStocksFromFirestore() {
     if (!indexSnap.exists()) return; // Noch nicht initialisiert → hardcodierte STOCKS bleiben
     const sections = indexSnap.data().sections || [];
     const firestoreStocks = {};
+
     await Promise.all(sections.map(async section => {
       const snap = await getDoc(doc(db,'config','stocks_'+section));
-      if (snap.exists()) firestoreStocks[section] = snap.data().stocks || [];
+      if (!snap.exists()) return;
+      const data = snap.data();
+
+      // Mehrteilige Reiter zusammensetzen (z.B. Russell 2000)
+      if (data.totalParts && data.totalParts > 1) {
+        let allStocks = [...(data.stocks || [])];
+        for (let i = 2; i <= data.totalParts; i++) {
+          try {
+            const partSnap = await getDoc(doc(db,'config',`stocks_${section}_part${i}`));
+            if (partSnap.exists()) allStocks = allStocks.concat(partSnap.data().stocks || []);
+          } catch {}
+        }
+        firestoreStocks[section] = allStocks;
+      } else {
+        firestoreStocks[section] = data.stocks || [];
+      }
+
+      // Label für INDEX_LABELS registrieren falls vorhanden
+      if (data.label) INDEX_LABELS[section] = data.label;
     }));
+
     if (Object.keys(firestoreStocks).length > 0) {
       rebuildAllStocks(firestoreStocks);
       console.log('Aktien-Liste aus Firestore geladen:', Object.keys(firestoreStocks));

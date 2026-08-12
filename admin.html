@@ -5,64 +5,68 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Scanner Admin</title>
 <style>
-  * { box-sizing: border-box; margin: 0; padding: 0; }
-  body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; padding: 16px; min-height: 100vh; }
-  h1 { color: #58a6ff; font-size: 20px; margin-bottom: 4px; }
-  .sub { color: #8b949e; font-size: 13px; margin-bottom: 24px; }
-  .card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; margin-bottom: 16px; }
-  .card h2 { font-size: 14px; color: #79c0ff; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
-  .btn { display: inline-block; padding: 10px 20px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; margin-bottom: 8px; }
-  .btn-green  { background: #238636; color: #fff; }
-  .btn-green:hover  { background: #2ea043; }
-  .btn-blue   { background: #1f6feb; color: #fff; }
-  .btn-blue:hover   { background: #388bfd; }
-  .btn-red    { background: #b91c1c; color: #fff; }
-  .btn-red:hover    { background: #dc2626; }
-  .btn:disabled { opacity: 0.4; cursor: not-allowed; }
-  .status { padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-top: 10px; display: none; }
-  .status.ok  { background: rgba(63,185,80,.1); border: 1px solid rgba(63,185,80,.3); color: #3fb950; display: block; }
-  .status.err { background: rgba(248,81,73,.1); border: 1px solid rgba(248,81,73,.3); color: #f85149; display: block; }
-  .status.info { background: rgba(31,111,235,.1); border: 1px solid rgba(31,111,235,.3); color: #79c0ff; display: block; }
-  .field { margin-bottom: 12px; }
-  .field label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 4px; }
-  .field input { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 10px 12px; border-radius: 8px; font-size: 14px; }
-  .user-info { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #0d1117; border-radius: 8px; margin-bottom: 12px; }
-  .user-info .uid { font-size: 11px; color: #8b949e; word-break: break-all; }
-  .badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
-  .badge.admin { background: rgba(63,185,80,.15); color: #3fb950; border: 1px solid rgba(63,185,80,.3); }
-  .badge.user  { background: rgba(139,148,158,.1); color: #8b949e; border: 1px solid #30363d; }
-  .progress { margin-top: 10px; }
-  .progress-bar { height: 4px; background: #21262d; border-radius: 2px; overflow: hidden; }
-  .progress-fill { height: 100%; background: #238636; border-radius: 2px; transition: width 0.3s; width: 0%; }
-  .progress-text { font-size: 12px; color: #8b949e; margin-top: 6px; }
-  .section-count { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 8px; }
-  .section-chip { font-size: 11px; padding: 3px 10px; background: #21262d; border-radius: 20px; color: #8b949e; }
-  .divider { border: none; border-top: 1px solid #21262d; margin: 16px 0; }
+* { box-sizing: border-box; margin: 0; padding: 0; }
+body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: #0d1117; color: #e6edf3; padding: 16px; min-height: 100vh; }
+h1 { color: #58a6ff; font-size: 20px; margin-bottom: 4px; }
+.sub { color: #8b949e; font-size: 13px; margin-bottom: 20px; }
+.card { background: #161b22; border: 1px solid #30363d; border-radius: 10px; padding: 16px; margin-bottom: 14px; }
+.card h2 { font-size: 13px; color: #79c0ff; margin-bottom: 12px; text-transform: uppercase; letter-spacing: 0.5px; }
+.btn { display: block; width: 100%; padding: 11px; border-radius: 8px; border: none; font-size: 14px; font-weight: 600; cursor: pointer; margin-bottom: 8px; text-align: center; }
+.btn:last-child { margin-bottom: 0; }
+.btn-green { background: #238636; color: #fff; } .btn-green:hover { background: #2ea043; }
+.btn-blue  { background: #1f6feb; color: #fff; } .btn-blue:hover  { background: #388bfd; }
+.btn-red   { background: #6e1515; color: #f85149; border: 1px solid #f85149; } .btn-red:hover { background: #b91c1c; color:#fff; }
+.btn-gray  { background: #21262d; color: #e6edf3; border: 1px solid #30363d; } .btn-gray:hover { background: #30363d; }
+.btn:disabled { opacity: 0.4; cursor: not-allowed; }
+.field { margin-bottom: 12px; }
+.field label { display: block; font-size: 12px; color: #8b949e; margin-bottom: 5px; }
+.field input, .field select { width: 100%; background: #0d1117; border: 1px solid #30363d; color: #e6edf3; padding: 10px 12px; border-radius: 8px; font-size: 14px; }
+.status { padding: 10px 14px; border-radius: 8px; font-size: 13px; margin-top: 10px; display: none; }
+.status.ok   { background: rgba(63,185,80,.1);  border: 1px solid rgba(63,185,80,.3);  color: #3fb950; display: block; }
+.status.err  { background: rgba(248,81,73,.1);  border: 1px solid rgba(248,81,73,.3);  color: #f85149; display: block; }
+.status.info { background: rgba(31,111,235,.1); border: 1px solid rgba(31,111,235,.3); color: #79c0ff; display: block; }
+.user-info { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: #0d1117; border-radius: 8px; margin-bottom: 12px; }
+.uid { font-size: 11px; color: #8b949e; word-break: break-all; }
+.badge { font-size: 11px; padding: 2px 8px; border-radius: 20px; font-weight: 600; white-space: nowrap; }
+.badge.admin { background: rgba(63,185,80,.15); color: #3fb950; border: 1px solid rgba(63,185,80,.3); }
+.badge.user  { background: rgba(139,148,158,.1); color: #8b949e; border: 1px solid #30363d; }
+.progress { margin-top: 10px; }
+.progress-bar { height: 4px; background: #21262d; border-radius: 2px; overflow: hidden; }
+.progress-fill { height: 100%; background: #238636; border-radius: 2px; transition: width 0.3s; width: 0%; }
+.progress-text { font-size: 12px; color: #8b949e; margin-top: 6px; }
+.tab-list { display: flex; flex-direction: column; gap: 8px; }
+.tab-item { display: flex; align-items: center; background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px; gap: 10px; }
+.tab-item-name { flex: 1; font-size: 14px; font-weight: 600; }
+.tab-item-count { font-size: 12px; color: #8b949e; }
+.tab-item-actions { display: flex; gap: 6px; }
+.icon-btn { background: none; border: 1px solid #30363d; color: #8b949e; border-radius: 6px; padding: 5px 8px; font-size: 13px; cursor: pointer; }
+.icon-btn:hover { border-color: #58a6ff; color: #58a6ff; }
+.icon-btn.del:hover { border-color: #f85149; color: #f85149; }
+.drop-zone { border: 2px dashed #30363d; border-radius: 8px; padding: 24px; text-align: center; color: #8b949e; font-size: 13px; cursor: pointer; transition: all .2s; margin-bottom: 10px; }
+.drop-zone:hover, .drop-zone.over { border-color: #58a6ff; color: #58a6ff; background: rgba(31,111,235,.05); }
+.drop-zone input[type=file] { display: none; }
+.preview-box { background: #0d1117; border: 1px solid #30363d; border-radius: 8px; padding: 10px 12px; font-size: 12px; color: #8b949e; margin-bottom: 10px; max-height: 120px; overflow-y: auto; font-family: monospace; display: none; }
+.hint { font-size: 12px; color: #8b949e; margin-bottom: 12px; line-height: 1.5; }
+.hint code { background: #21262d; padding: 1px 5px; border-radius: 4px; color: #79c0ff; }
 </style>
 </head>
 <body>
 
 <h1>⚙️ Scanner Admin</h1>
-<p class="sub">Verwaltung der Standard-Aktien-Liste und Admin-Rechte</p>
+<p class="sub">Verwaltung der Aktien-Reiter</p>
 
 <!-- Login -->
 <div class="card" id="loginCard">
   <h2>🔐 Login</h2>
-  <div class="field">
-    <label>E-Mail</label>
-    <input type="email" id="email" placeholder="deine@email.com">
-  </div>
-  <div class="field">
-    <label>Passwort</label>
-    <input type="password" id="password" placeholder="••••••••">
-  </div>
+  <div class="field"><label>E-Mail</label><input type="email" id="email" placeholder="deine@email.com"></div>
+  <div class="field"><label>Passwort</label><input type="password" id="password" placeholder="••••••••"></div>
   <button class="btn btn-blue" onclick="doLogin()">Einloggen</button>
   <div class="status" id="loginStatus"></div>
 </div>
 
-<!-- User Info (nach Login) -->
+<!-- User Info -->
 <div class="card" id="userCard" style="display:none">
-  <h2>👤 Eingeloggt als</h2>
+  <h2>👤 Eingeloggt</h2>
   <div class="user-info">
     <div style="flex:1">
       <div id="userEmail" style="font-size:14px;font-weight:600"></div>
@@ -70,53 +74,107 @@
     </div>
     <span class="badge" id="adminBadge">...</span>
   </div>
-  <button class="btn btn-red" style="margin-top:4px" onclick="doLogout()">Ausloggen</button>
-</div>
-
-<!-- Admin Aktionen -->
-<div id="adminSection" style="display:none">
-
-  <div class="card">
-    <h2>🚀 Standard-Liste initialisieren</h2>
-    <p style="font-size:13px;color:#8b949e;margin-bottom:12px">
-      Schreibt alle Standard-Reiter (DAX, EUROSTOXX, SMI, FTSE100, NASDAQ100, SP500, NIKKEI225, HANGSENG, INDICES, COMMODITIES) in Firestore unter <code style="color:#79c0ff">config/stocks</code>.
-      Kann jederzeit wiederholt werden um die Liste zu aktualisieren.
-    </p>
-    <div class="section-count" id="sectionCount"></div>
-    <button class="btn btn-green" style="margin-top:12px" onclick="initStocks()" id="initBtn">Standard-Liste in Firestore schreiben</button>
-    <div class="progress" id="initProgress" style="display:none">
-      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
-      <div class="progress-text" id="progressText">Wird vorbereitet...</div>
-    </div>
-    <div class="status" id="initStatus"></div>
-  </div>
-
-  <div class="card">
-    <h2>🗑️ Cache löschen</h2>
-    <p style="font-size:13px;color:#8b949e;margin-bottom:12px">
-      Löscht alle gecachten Candle-Daten unter <code style="color:#79c0ff">cache/</code>. Alle User müssen danach neu laden.
-    </p>
-    <button class="btn btn-red" onclick="clearCache()" id="cacheBtn">Cache leeren</button>
-    <div class="status" id="cacheStatus"></div>
-  </div>
-
+  <button class="btn btn-gray" onclick="doLogout()">Ausloggen</button>
 </div>
 
 <!-- Kein Admin -->
 <div class="card" id="noAdminCard" style="display:none">
   <h2>🚫 Kein Admin-Zugriff</h2>
-  <p style="font-size:13px;color:#8b949e">
-    Dein Account hat keine Admin-Rechte. Trage deine UID in <code style="color:#79c0ff">config/admins.uids</code> in Firestore ein.
-  </p>
-  <div class="status info" style="display:block;margin-top:10px">
-    Deine UID: <span id="noAdminUid" style="font-weight:600;word-break:break-all"></span>
+  <p class="hint">Trage deine UID in <code>config/admins.uids</code> in Firestore ein.</p>
+  <div class="status info" style="display:block">Deine UID: <span id="noAdminUid" style="font-weight:600;word-break:break-all"></span></div>
+</div>
+
+<!-- Admin Bereich -->
+<div id="adminSection" style="display:none">
+
+  <!-- Reiter Übersicht -->
+  <div class="card">
+    <h2>📋 Aktuelle Reiter</h2>
+    <div class="tab-list" id="tabList">
+      <div style="color:#8b949e;font-size:13px">Lade...</div>
+    </div>
+    <div class="status" id="tabListStatus"></div>
+  </div>
+
+  <!-- CSV Import -->
+  <div class="card">
+    <h2>📥 Reiter per CSV importieren</h2>
+    <p class="hint">
+      CSV-Format: zwei Spalten, erste Zeile optional als Header.<br>
+      Spalte 1 = <code>Symbol</code> · Spalte 2 = <code>Name</code><br>
+      Trennzeichen: Komma, Semikolon oder Tab.<br>
+      Beispiel: <code>AAPL,Apple</code> oder <code>SAP.DE;SAP SE</code>
+    </p>
+
+    <div class="field">
+      <label>Reiter-Name</label>
+      <input type="text" id="csvTabName" placeholder="z.B. RUSSELL2000">
+    </div>
+
+    <div class="field">
+      <label>Bestehenden Reiter ersetzen? (leer lassen für neuen Reiter)</label>
+      <select id="csvReplaceSelect">
+        <option value="">— Neuen Reiter anlegen —</option>
+      </select>
+    </div>
+
+    <div class="drop-zone" id="dropZone" onclick="document.getElementById('csvFile').click()">
+      <input type="file" id="csvFile" accept=".csv,.txt" onchange="handleFile(this.files[0])">
+      📂 CSV-Datei auswählen oder hier ablegen
+    </div>
+
+    <div class="preview-box" id="previewBox"></div>
+
+    <button class="btn btn-green" id="importBtn" onclick="importCSV()" disabled>In Firestore speichern</button>
+    <div class="progress" id="importProgress" style="display:none">
+      <div class="progress-bar"><div class="progress-fill" id="importFill"></div></div>
+      <div class="progress-text" id="importText">Wird gespeichert...</div>
+    </div>
+    <div class="status" id="importStatus"></div>
+  </div>
+
+  <!-- Neuen leeren Reiter anlegen -->
+  <div class="card">
+    <h2>➕ Leeren Reiter anlegen</h2>
+    <div class="field">
+      <label>Reiter-ID (intern, keine Leerzeichen)</label>
+      <input type="text" id="newTabId" placeholder="z.B. RUSSELL2000">
+    </div>
+    <div class="field">
+      <label>Anzeige-Name</label>
+      <input type="text" id="newTabLabel" placeholder="z.B. Russell 2000">
+    </div>
+    <button class="btn btn-blue" onclick="createEmptyTab()">Leeren Reiter anlegen</button>
+    <div class="status" id="newTabStatus"></div>
+  </div>
+
+  <!-- Cache löschen -->
+  <div class="card">
+    <h2>🗑️ Cache leeren</h2>
+    <p class="hint">Löscht alle gecachten Candle-Daten. Alle User müssen danach neu laden.</p>
+    <button class="btn btn-red" onclick="clearCache()">Cache leeren</button>
+    <div class="status" id="cacheStatus"></div>
+  </div>
+
+</div>
+
+<!-- Confirm Modal -->
+<div id="confirmModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.7);z-index:9999;align-items:center;justify-content:center">
+  <div style="background:#161b22;border:1px solid #30363d;border-radius:12px;padding:20px;max-width:320px;width:90%;margin:0 16px">
+    <div id="confirmMsg" style="font-size:14px;margin-bottom:16px;line-height:1.5"></div>
+    <div style="display:flex;gap:8px">
+      <button class="btn btn-red" style="margin:0" onclick="confirmYes()">Löschen</button>
+      <button class="btn btn-gray" style="margin:0" onclick="closeConfirm()">Abbrechen</button>
+    </div>
   </div>
 </div>
 
 <script type="module">
-import { initializeApp }                           from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
-import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
-import { getFirestore, doc, getDoc, setDoc, collection, getDocs, deleteDoc } from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
+import { initializeApp }    from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-app.js';
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-auth.js';
+import { getFirestore, doc, getDoc, setDoc, getDocs, deleteDoc, collection }
+  from 'https://www.gstatic.com/firebasejs/10.12.0/firebase-firestore.js';
 
 const firebaseConfig = {
   apiKey: "AIzaSyA3nNCGuca7G8S-0IiAem0vZcPrMUv4EB8",
@@ -131,282 +189,313 @@ const app  = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db   = getFirestore(app);
 
-// ── Standard-Aktien-Liste ────────────────────────────────────────────────────
-const STOCKS = {
-  DAX: [
-    {s:'ADS.DE',n:'Adidas'},{s:'AIR.DE',n:'Airbus'},{s:'ALV.DE',n:'Allianz'},
-    {s:'BAS.DE',n:'BASF'},{s:'BAYN.DE',n:'Bayer'},{s:'BEI.DE',n:'Beiersdorf'},
-    {s:'BMW.DE',n:'BMW'},{s:'BNR.DE',n:'Brenntag'},{s:'CBK.DE',n:'Commerzbank'},
-    {s:'CON.DE',n:'Continental'},{s:'DB1.DE',n:'Deutsche Boerse'},{s:'DBK.DE',n:'Deutsche Bank'},
-    {s:'DHL.DE',n:'DHL Group'},{s:'DTE.DE',n:'Deutsche Telekom'},{s:'DHER.DE',n:'Delivery Hero'},
-    {s:'ENR.DE',n:'Siemens Energy'},{s:'EOAN.DE',n:'E.ON'},{s:'FME.DE',n:'Fresenius Medical'},
-    {s:'FRE.DE',n:'Fresenius'},{s:'HEI.DE',n:'Heidelberg Mat.'},{s:'HEN3.DE',n:'Henkel'},
-    {s:'IFX.DE',n:'Infineon'},{s:'LIN.DE',n:'Linde'},{s:'MBG.DE',n:'Mercedes-Benz'},
-    {s:'MRK.DE',n:'Merck KGaA'},{s:'MTX.DE',n:'MTU Aero'},{s:'MUV2.DE',n:'Munich Re'},
-    {s:'PAH3.DE',n:'Porsche Holding'},{s:'P911.DE',n:'Porsche AG'},{s:'QIA.DE',n:'Qiagen'},
-    {s:'RHM.DE',n:'Rheinmetall'},{s:'RWE.DE',n:'RWE'},{s:'SAP.DE',n:'SAP'},
-    {s:'SHL.DE',n:'Siemens Healthineers'},{s:'SIE.DE',n:'Siemens'},{s:'SY1.DE',n:'Symrise'},
-    {s:'VNA.DE',n:'Vonovia'},{s:'VOW3.DE',n:'Volkswagen'},{s:'ZAL.DE',n:'Zalando'},
-    {s:'SRT3.DE',n:'Sartorius'}
-  ],
-  EUROSTOXX: [
-    {s:'ASML.AS',n:'ASML'},{s:'MC.PA',n:'LVMH'},{s:'SAN.PA',n:'Sanofi'},
-    {s:'TTE.PA',n:'TotalEnergies'},{s:'INGA.AS',n:'ING Group'},{s:'BNP.PA',n:'BNP Paribas'},
-    {s:'DG.PA',n:'Vinci'},{s:'OR.PA',n:"L'Oreal"},{s:'SAF.PA',n:'Safran'},
-    {s:'DSY.PA',n:'Dassault Systemes'},{s:'SU.PA',n:'Schneider Electric'},
-    {s:'KER.PA',n:'Kering'},{s:'EL.PA',n:'EssilorLuxottica'},{s:'ABI.BR',n:'AB InBev'},
-    {s:'PHIA.AS',n:'Philips'},{s:'AXA.PA',n:'AXA'},{s:'ENGI.PA',n:'Engie'},
-    {s:'ORA.PA',n:'Orange'},{s:'GLE.PA',n:'Societe Generale'},{s:'SGO.PA',n:'Saint-Gobain'},
-    {s:'CAP.PA',n:'Capgemini'},{s:'AD.AS',n:'Ahold Delhaize'},
-    {s:'BBVA.MC',n:'BBVA'},{s:'SAN.MC',n:'Santander'},{s:'ITX.MC',n:'Inditex'},
-    {s:'IBE.MC',n:'Iberdrola'},{s:'TEF.MC',n:'Telefonica'},
-    {s:'ISP.MI',n:'Intesa Sanpaolo'},{s:'ENI.MI',n:'ENI'},{s:'ENEL.MI',n:'Enel'},
-    {s:'UCG.MI',n:'UniCredit'},{s:'STM.MI',n:'STMicroelectronics'},
-    {s:'SAP.DE',n:'SAP'},{s:'SIE.DE',n:'Siemens'},{s:'ALV.DE',n:'Allianz'},
-    {s:'MUV2.DE',n:'Munich Re'},{s:'BAS.DE',n:'BASF'},{s:'BAYN.DE',n:'Bayer'},
-    {s:'BMW.DE',n:'BMW'},{s:'DBK.DE',n:'Deutsche Bank'},{s:'DTE.DE',n:'Deutsche Telekom'},
-    {s:'EOAN.DE',n:'E.ON'},{s:'IFX.DE',n:'Infineon'},{s:'MBG.DE',n:'Mercedes-Benz'},
-    {s:'RWE.DE',n:'RWE'},{s:'VOW3.DE',n:'Volkswagen'},{s:'ADYEN.AS',n:'Adyen'},
-    {s:'PRX.AS',n:'Prosus'},{s:'NOKIA.HE',n:'Nokia'},{s:'NDA-FI.HE',n:'Nordea'},
-    {s:'UCB.BR',n:'UCB'},{s:'DHL.DE',n:'DHL Group'},{s:'ENR.DE',n:'Siemens Energy'},
-    {s:'AIR.DE',n:'Airbus'}
-  ],
-  SMI: [
-    {s:'NESN.SW',n:'Nestle'},{s:'ROG.SW',n:'Roche'},{s:'NOVN.SW',n:'Novartis'},
-    {s:'UBSG.SW',n:'UBS'},{s:'ABBN.SW',n:'ABB'},{s:'ZURN.SW',n:'Zurich Insurance'},
-    {s:'SREN.SW',n:'Swiss Re'},{s:'LONN.SW',n:'Lonza'},{s:'GIVN.SW',n:'Givaudan'},
-    {s:'SIKA.SW',n:'Sika'},{s:'PGHN.SW',n:'Partners Group'},{s:'SCMN.SW',n:'Swisscom'},
-    {s:'GEBN.SW',n:'Geberit'},{s:'SLHN.SW',n:'Swiss Life'},{s:'BALN.SW',n:'Baloise'},
-    {s:'ALC.SW',n:'Alcon'},{s:'CFR.SW',n:'Richemont'},{s:'SGSN.SW',n:'SGS'},
-    {s:'HOLN.SW',n:'Holcim'},{s:'KNIN.SW',n:'Kuehne+Nagel'}
-  ],
-  FTSE100: [
-    {s:'AAL.L',n:'Anglo American'},{s:'ABF.L',n:'Associated British Foods'},{s:'AHT.L',n:'Ashtead Group'},
-    {s:'AV.L',n:'Aviva'},{s:'AZN.L',n:'AstraZeneca'},{s:'BA.L',n:'BAE Systems'},
-    {s:'BARC.L',n:'Barclays'},{s:'BATS.L',n:'British American Tobacco'},{s:'BHP.L',n:'BHP'},
-    {s:'BP.L',n:'BP'},{s:'BRBY.L',n:'Burberry'},{s:'BKG.L',n:'Berkeley Group'},
-    {s:'CCH.L',n:'Coca-Cola HBC'},{s:'CNA.L',n:'Centrica'},{s:'CPG.L',n:'Compass Group'},
-    {s:'CRH.L',n:'CRH'},{s:'DCC.L',n:'DCC'},{s:'DGE.L',n:'Diageo'},
-    {s:'DPLM.L',n:'Diploma'},{s:'EZJ.L',n:'easyJet'},{s:'EXPN.L',n:'Experian'},
-    {s:'FLTR.L',n:'Flutter Entertainment'},{s:'FRES.L',n:'Fresnillo'},{s:'GLEN.L',n:'Glencore'},
-    {s:'GSK.L',n:'GSK'},{s:'HLMA.L',n:'Halma'},{s:'HSBA.L',n:'HSBC'},
-    {s:'IAG.L',n:'IAG'},{s:'IMB.L',n:'Imperial Brands'},{s:'INF.L',n:'Informa'},
-    {s:'JD.L',n:'JD Sports'},{s:'KGF.L',n:'Kingfisher'},{s:'LAND.L',n:'Land Securities'},
-    {s:'LGEN.L',n:'Legal & General'},{s:'LLOY.L',n:'Lloyds'},{s:'LSEG.L',n:'LSEG'},
-    {s:'MKS.L',n:'Marks & Spencer'},{s:'MNG.L',n:'M&G'},{s:'NG.L',n:'National Grid'},
-    {s:'NWG.L',n:'NatWest'},{s:'NXT.L',n:'Next'},{s:'PHNX.L',n:'Phoenix Group'},
-    {s:'PRU.L',n:'Prudential'},{s:'RIO.L',n:'Rio Tinto'},{s:'RKT.L',n:'Reckitt'},
-    {s:'REL.L',n:'RELX'},{s:'RR.L',n:'Rolls-Royce'},{s:'SBRY.L',n:'Sainsbury'},
-    {s:'SGRO.L',n:'SEGRO'},{s:'SHEL.L',n:'Shell'},{s:'SMT.L',n:'Scottish Mortgage'},
-    {s:'SN.L',n:'Smith & Nephew'},{s:'SSE.L',n:'SSE'},{s:'STAN.L',n:'Standard Chartered'},
-    {s:'SVT.L',n:'Severn Trent'},{s:'TSCO.L',n:'Tesco'},{s:'ULVR.L',n:'Unilever'},
-    {s:'VOD.L',n:'Vodafone'},{s:'WPP.L',n:'WPP'},{s:'III.L',n:'3i Group'}
-  ],
-  NASDAQ100: [
-    {s:'AAPL',n:'Apple'},{s:'MSFT',n:'Microsoft'},{s:'NVDA',n:'NVIDIA'},{s:'AMZN',n:'Amazon'},
-    {s:'META',n:'Meta Platforms'},{s:'GOOGL',n:'Alphabet A'},{s:'TSLA',n:'Tesla'},
-    {s:'AVGO',n:'Broadcom'},{s:'COST',n:'Costco'},{s:'NFLX',n:'Netflix'},
-    {s:'ASML',n:'ASML'},{s:'AMD',n:'AMD'},{s:'QCOM',n:'Qualcomm'},
-    {s:'INTU',n:'Intuit'},{s:'AMAT',n:'Applied Materials'},{s:'ISRG',n:'Intuitive Surgical'},
-    {s:'TXN',n:'Texas Instruments'},{s:'AMGN',n:'Amgen'},{s:'BKNG',n:'Booking Holdings'},
-    {s:'MU',n:'Micron'},{s:'CMCSA',n:'Comcast'},{s:'HON',n:'Honeywell'},
-    {s:'LRCX',n:'Lam Research'},{s:'PANW',n:'Palo Alto Networks'},{s:'ADI',n:'Analog Devices'},
-    {s:'MELI',n:'MercadoLibre'},{s:'KLAC',n:'KLA Corp'},{s:'SNPS',n:'Synopsys'},
-    {s:'CDNS',n:'Cadence'},{s:'REGN',n:'Regeneron'},{s:'CRWD',n:'CrowdStrike'},
-    {s:'CTAS',n:'Cintas'},{s:'ABNB',n:'Airbnb'},{s:'MRVL',n:'Marvell'},
-    {s:'CSX',n:'CSX'},{s:'ADSK',n:'Autodesk'},{s:'FTNT',n:'Fortinet'},
-    {s:'PAYX',n:'Paychex'},{s:'MRNA',n:'Moderna'},{s:'IDXX',n:'IDEXX'},
-    {s:'BIIB',n:'Biogen'},{s:'ZS',n:'Zscaler'},{s:'FAST',n:'Fastenal'},
-    {s:'TEAM',n:'Atlassian'},{s:'DDOG',n:'Datadog'},{s:'SBUX',n:'Starbucks'},
-    {s:'GILD',n:'Gilead'},{s:'CEG',n:'Constellation Energy'},{s:'PYPL',n:'PayPal'},
-    {s:'VRTX',n:'Vertex Pharma'},{s:'WDAY',n:'Workday'},{s:'INTC',n:'Intel'},
-    {s:'CSCO',n:'Cisco'},{s:'ADP',n:'ADP'},{s:'WMT',n:'Walmart'}
-  ],
-  SP500: [
-    {s:'AAPL',n:'Apple'},{s:'MSFT',n:'Microsoft'},{s:'NVDA',n:'NVIDIA'},{s:'AMZN',n:'Amazon'},
-    {s:'META',n:'Meta'},{s:'GOOGL',n:'Alphabet A'},{s:'BRK-B',n:'Berkshire Hathaway'},
-    {s:'TSLA',n:'Tesla'},{s:'AVGO',n:'Broadcom'},{s:'JPM',n:'JPMorgan Chase'},
-    {s:'UNH',n:'UnitedHealth'},{s:'V',n:'Visa'},{s:'XOM',n:'Exxon Mobil'},
-    {s:'MA',n:'Mastercard'},{s:'COST',n:'Costco'},{s:'HD',n:'Home Depot'},
-    {s:'PG',n:'Procter & Gamble'},{s:'JNJ',n:'Johnson & Johnson'},{s:'ABBV',n:'AbbVie'},
-    {s:'BAC',n:'Bank of America'},{s:'NFLX',n:'Netflix'},{s:'CRM',n:'Salesforce'},
-    {s:'WMT',n:'Walmart'},{s:'CVX',n:'Chevron'},{s:'MRK',n:'Merck'},
-    {s:'KO',n:'Coca-Cola'},{s:'AMD',n:'AMD'},{s:'PEP',n:'PepsiCo'},
-    {s:'TMO',n:'Thermo Fisher'},{s:'ACN',n:'Accenture'},{s:'LIN',n:'Linde'},
-    {s:'MCD',n:"McDonald's"},{s:'CSCO',n:'Cisco'},{s:'ABT',n:'Abbott'},
-    {s:'GE',n:'GE'},{s:'DHR',n:'Danaher'},{s:'IBM',n:'IBM'},
-    {s:'TXN',n:'Texas Instruments'},{s:'INTU',n:'Intuit'},{s:'AMGN',n:'Amgen'},
-    {s:'CAT',n:'Caterpillar'},{s:'NOW',n:'ServiceNow'},{s:'ISRG',n:'Intuitive Surgical'},
-    {s:'RTX',n:'RTX'},{s:'SPGI',n:'S&P Global'},{s:'HON',n:'Honeywell'},
-    {s:'PLD',n:'Prologis'},{s:'GS',n:'Goldman Sachs'},{s:'UPS',n:'UPS'},
-    {s:'AXP',n:'American Express'},{s:'BKNG',n:'Booking Holdings'},{s:'SYK',n:'Stryker'},
-    {s:'BLK',n:'BlackRock'},{s:'VRTX',n:'Vertex Pharma'},{s:'DE',n:'Deere'},
-    {s:'MS',n:'Morgan Stanley'},{s:'GILD',n:'Gilead'},{s:'ADP',n:'ADP'},
-    {s:'PANW',n:'Palo Alto'},{s:'C',n:'Citigroup'},{s:'WFC',n:'Wells Fargo'},
-    {s:'TJX',n:'TJX'},{s:'REGN',n:'Regeneron'},{s:'PGR',n:'Progressive'},
-    {s:'BSX',n:'Boston Scientific'},{s:'AMAT',n:'Applied Materials'},{s:'LRCX',n:'Lam Research'},
-    {s:'KKR',n:'KKR'},{s:'SO',n:'Southern Co'},{s:'MO',n:'Altria'},
-    {s:'DUK',n:'Duke Energy'},{s:'CL',n:'Colgate'},{s:'MMC',n:'Marsh McLennan'},
-    {s:'MCO',n:"Moody's"},{s:'ZTS',n:'Zoetis'},{s:'CME',n:'CME Group'},
-    {s:'NOC',n:'Northrop Grumman'},{s:'F',n:'Ford'},{s:'GM',n:'General Motors'}
-  ],
-  NIKKEI225: [
-    {s:'7203.T',n:'Toyota'},{s:'6758.T',n:'Sony'},{s:'9984.T',n:'SoftBank'},
-    {s:'8306.T',n:'Mitsubishi UFJ'},{s:'6861.T',n:'Keyence'},{s:'9432.T',n:'NTT'},
-    {s:'7974.T',n:'Nintendo'},{s:'6954.T',n:'Fanuc'},{s:'4063.T',n:'Shin-Etsu Chem.'},
-    {s:'8058.T',n:'Mitsubishi Corp'},{s:'6367.T',n:'Daikin'},{s:'9433.T',n:'KDDI'},
-    {s:'7267.T',n:'Honda'},{s:'8316.T',n:'Sumitomo Mitsui'},{s:'6098.T',n:'Recruit'},
-    {s:'4568.T',n:'Daiichi Sankyo'},{s:'8035.T',n:'Tokyo Electron'},{s:'7741.T',n:'Hoya'},
-    {s:'6501.T',n:'Hitachi'},{s:'9983.T',n:'Fast Retailing'},{s:'4901.T',n:'Fujifilm'},
-    {s:'8766.T',n:'Tokio Marine'},{s:'6503.T',n:'Mitsubishi Electric'},{s:'7751.T',n:'Canon'},
-    {s:'8802.T',n:'Mitsubishi Estate'},{s:'2914.T',n:'Japan Tobacco'},{s:'6723.T',n:'Renesas'},
-    {s:'8031.T',n:'Mitsui & Co'},{s:'7201.T',n:'Nissan'},{s:'3382.T',n:'Seven & i'},
-    {s:'8001.T',n:'Itochu'},{s:'5108.T',n:'Bridgestone'},{s:'4502.T',n:'Takeda'},
-    {s:'6326.T',n:'Kubota'},{s:'9101.T',n:'Nippon Yusen'},{s:'6902.T',n:'Denso'}
-  ],
-  HANGSENG: [
-    {s:'0700.HK',n:'Tencent'},{s:'9988.HK',n:'Alibaba'},{s:'0941.HK',n:'China Mobile'},
-    {s:'3690.HK',n:'Meituan'},{s:'1299.HK',n:'AIA Group'},{s:'0005.HK',n:'HSBC HK'},
-    {s:'2318.HK',n:'Ping An Insurance'},{s:'1810.HK',n:'Xiaomi'},{s:'9618.HK',n:'JD.com'},
-    {s:'0388.HK',n:'HKEx'},{s:'2020.HK',n:'ANTA Sports'},{s:'9999.HK',n:'NetEase'},
-    {s:'1211.HK',n:'BYD'},{s:'0016.HK',n:'Sun Hung Kai'},{s:'0883.HK',n:'CNOOC'},
-    {s:'3988.HK',n:'Bank of China'},{s:'0386.HK',n:'Sinopec'},{s:'0857.HK',n:'PetroChina'},
-    {s:'1398.HK',n:'ICBC'},{s:'0939.HK',n:'China Construction Bank'}
-  ],
-  INDICES: [
-    {s:'^GDAXI',n:'DAX'},{s:'^STOXX50E',n:'Euro Stoxx 50'},{s:'^SSMI',n:'SMI'},
-    {s:'^FTSE',n:'FTSE 100'},{s:'^GSPC',n:'S&P 500'},{s:'^IXIC',n:'Nasdaq'},
-    {s:'^DJI',n:'Dow Jones'},{s:'^N225',n:'Nikkei 225'},{s:'^HSI',n:'Hang Seng'},
-    {s:'^FCHI',n:'CAC 40'},{s:'^IBEX',n:'IBEX 35'},{s:'^FTMIB',n:'FTSE MIB'},
-    {s:'^AEX',n:'AEX'},{s:'^VIX',n:'VIX (Volatilität)'}
-  ],
-  COMMODITIES: [
-    {s:'GC=F',n:'Gold'},{s:'SI=F',n:'Silber'},{s:'PL=F',n:'Platin'},{s:'PA=F',n:'Palladium'},
-    {s:'CL=F',n:'Öl WTI'},{s:'BZ=F',n:'Öl Brent'},{s:'NG=F',n:'Erdgas'},
-    {s:'HH=F',n:'Henry Hub Gas'},{s:'HG=F',n:'Kupfer'},{s:'ALI=F',n:'Aluminium'},
-    {s:'ZW=F',n:'Weizen'},{s:'ZC=F',n:'Mais'},{s:'ZS=F',n:'Soja'}
-  ]
-};
+// ── State ────────────────────────────────────────────────────────────────────
+let parsedStocks = [];   // aus CSV geparst
+let confirmCallback = null;
 
-// ── Auth State ──────────────────────────────────────────────────────────────
-onAuthStateChanged(auth, async user => {
-  if (user) {
-    document.getElementById('loginCard').style.display = 'none';
-    document.getElementById('userCard').style.display = 'block';
-    document.getElementById('userEmail').textContent = user.email;
-    document.getElementById('userUid').textContent = 'UID: ' + user.uid;
-
-    // Admin prüfen
-    try {
-      const snap = await getDoc(doc(db, 'config', 'admins'));
-      const isAdmin = snap.exists() && (snap.data().uids || []).includes(user.uid);
-      const badge = document.getElementById('adminBadge');
-      if (isAdmin) {
-        badge.textContent = '✓ Admin';
-        badge.className = 'badge admin';
-        document.getElementById('adminSection').style.display = 'block';
-        showSectionCounts();
-      } else {
-        badge.textContent = 'User';
-        badge.className = 'badge user';
-        document.getElementById('noAdminCard').style.display = 'block';
-        document.getElementById('noAdminUid').textContent = user.uid;
-      }
-    } catch(e) {
-      document.getElementById('noAdminCard').style.display = 'block';
-      document.getElementById('noAdminUid').textContent = user.uid;
-    }
-  } else {
-    document.getElementById('loginCard').style.display = 'block';
-    document.getElementById('userCard').style.display = 'none';
-    document.getElementById('adminSection').style.display = 'none';
-    document.getElementById('noAdminCard').style.display = 'none';
-  }
-});
-
-function showSectionCounts() {
-  const el = document.getElementById('sectionCount');
-  el.innerHTML = Object.entries(STOCKS).map(([k,v]) =>
-    `<span class="section-chip">${k}: ${v.length}</span>`
-  ).join('');
-}
-
+// ── Helpers ──────────────────────────────────────────────────────────────────
 function showStatus(id, msg, type) {
   const el = document.getElementById(id);
   el.textContent = msg;
   el.className = 'status ' + type;
 }
 
-// ── Login / Logout ───────────────────────────────────────────────────────────
+function setProgress(fillId, textId, pct, msg) {
+  document.getElementById(fillId).style.width = pct + '%';
+  document.getElementById(textId).textContent = msg;
+}
+
+// ── Auth ─────────────────────────────────────────────────────────────────────
+onAuthStateChanged(auth, async user => {
+  if (user) {
+    document.getElementById('loginCard').style.display  = 'none';
+    document.getElementById('userCard').style.display   = 'block';
+    document.getElementById('userEmail').textContent    = user.email;
+    document.getElementById('userUid').textContent      = 'UID: ' + user.uid;
+
+    try {
+      const snap    = await getDoc(doc(db, 'config', 'admins'));
+      const isAdmin = snap.exists() && (snap.data().uids || []).includes(user.uid);
+      const badge   = document.getElementById('adminBadge');
+      if (isAdmin) {
+        badge.textContent = '✓ Admin';
+        badge.className   = 'badge admin';
+        document.getElementById('adminSection').style.display = 'block';
+        loadTabList();
+      } else {
+        badge.textContent = 'User';
+        badge.className   = 'badge user';
+        document.getElementById('noAdminCard').style.display  = 'block';
+        document.getElementById('noAdminUid').textContent     = user.uid;
+      }
+    } catch(e) {
+      document.getElementById('noAdminCard').style.display = 'block';
+      document.getElementById('noAdminUid').textContent    = user.uid;
+    }
+  } else {
+    ['loginCard'].forEach(id => document.getElementById(id).style.display = 'block');
+    ['userCard','adminSection','noAdminCard'].forEach(id => document.getElementById(id).style.display = 'none');
+  }
+});
+
 window.doLogin = async () => {
-  const email = document.getElementById('email').value.trim();
-  const pw    = document.getElementById('password').value;
   try {
-    await signInWithEmailAndPassword(auth, email, pw);
-  } catch(e) {
-    showStatus('loginStatus', '❌ ' + e.message, 'err');
-  }
+    await signInWithEmailAndPassword(auth,
+      document.getElementById('email').value.trim(),
+      document.getElementById('password').value);
+  } catch(e) { showStatus('loginStatus', '❌ ' + e.message, 'err'); }
 };
+window.doLogout = () => signOut(auth);
 
-window.doLogout = async () => {
-  await signOut(auth);
-};
-
-// ── Stocks initialisieren ────────────────────────────────────────────────────
-window.initStocks = async () => {
-  const btn = document.getElementById('initBtn');
-  btn.disabled = true;
-  document.getElementById('initProgress').style.display = 'block';
-  document.getElementById('initStatus').className = 'status';
-
-  const sections = Object.keys(STOCKS);
-  let done = 0;
+// ── Reiter laden & anzeigen ───────────────────────────────────────────────────
+async function loadTabList() {
+  const list   = document.getElementById('tabList');
+  const select = document.getElementById('csvReplaceSelect');
+  list.innerHTML = '<div style="color:#8b949e;font-size:13px">Lade...</div>';
 
   try {
+    const indexSnap = await getDoc(doc(db, 'config', 'stocks_index'));
+    if (!indexSnap.exists()) {
+      list.innerHTML = '<div style="color:#8b949e;font-size:13px">Noch keine Reiter vorhanden.</div>';
+      return;
+    }
+    const sections = indexSnap.data().sections || [];
+
+    // Select aufbauen
+    select.innerHTML = '<option value="">— Neuen Reiter anlegen —</option>';
+
+    if (!sections.length) {
+      list.innerHTML = '<div style="color:#8b949e;font-size:13px">Noch keine Reiter vorhanden.</div>';
+      return;
+    }
+
+    let html = '';
     for (const section of sections) {
-      document.getElementById('progressText').textContent = `Schreibe ${section}...`;
-      document.getElementById('progressFill').style.width = (done / sections.length * 100) + '%';
-
-      await setDoc(doc(db, 'config', 'stocks_' + section), {
-        section,
-        stocks: STOCKS[section],
-        updatedAt: Date.now()
-      });
-      done++;
+      const snap  = await getDoc(doc(db, 'config', 'stocks_' + section));
+      const count = snap.exists() ? (snap.data().stocks || []).length : 0;
+      const label = snap.exists() ? (snap.data().label || section) : section;
+      html += `
+        <div class="tab-item">
+          <div class="tab-item-name">${label}</div>
+          <div class="tab-item-count">${count} Aktien</div>
+          <div class="tab-item-actions">
+            <button class="icon-btn del" onclick="confirmDelete('${section}','${label}')">🗑</button>
+          </div>
+        </div>`;
+      select.innerHTML += `<option value="${section}">${label} (${count} Aktien)</option>`;
     }
-
-    // Index-Dokument mit allen Sektionsnamen
-    await setDoc(doc(db, 'config', 'stocks_index'), {
-      sections,
-      updatedAt: Date.now()
-    });
-
-    document.getElementById('progressFill').style.width = '100%';
-    document.getElementById('progressText').textContent = `✓ ${sections.length} Reiter gespeichert`;
-    showStatus('initStatus', `✅ Erfolgreich! ${sections.length} Reiter mit ${Object.values(STOCKS).reduce((a,b)=>a+b.length,0)} Aktien in Firestore gespeichert.`, 'ok');
+    list.innerHTML = html;
   } catch(e) {
-    showStatus('initStatus', '❌ Fehler: ' + e.message, 'err');
+    list.innerHTML = `<div style="color:#f85149;font-size:13px">Fehler: ${e.message}</div>`;
   }
-  btn.disabled = false;
+}
+
+// ── CSV Parsing ───────────────────────────────────────────────────────────────
+window.handleFile = function(file) {
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = e => {
+    const text = e.target.result;
+    parsedStocks = parseCSV(text);
+    const preview = document.getElementById('previewBox');
+    if (!parsedStocks.length) {
+      preview.style.display = 'block';
+      preview.textContent   = '⚠️ Keine gültigen Einträge gefunden.';
+      document.getElementById('importBtn').disabled = true;
+      return;
+    }
+    const first5 = parsedStocks.slice(0, 5).map(s => `${s.s} → ${s.n}`).join('\n');
+    preview.style.display = 'block';
+    preview.textContent   = `✓ ${parsedStocks.length} Aktien erkannt:\n${first5}${parsedStocks.length > 5 ? `\n... und ${parsedStocks.length - 5} weitere` : ''}`;
+    document.getElementById('importBtn').disabled = false;
+  };
+  reader.readAsText(file);
 };
 
-// ── Cache löschen ────────────────────────────────────────────────────────────
-window.clearCache = async () => {
-  const btn = document.getElementById('cacheBtn');
-  btn.disabled = true;
-  showStatus('cacheStatus', '⏳ Cache wird gelöscht...', 'info');
+function parseCSV(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const result = [];
+  let sep = ',';
+  if (lines[0]?.includes(';')) sep = ';';
+  else if (lines[0]?.includes('\t')) sep = '\t';
+
+  for (const line of lines) {
+    const parts = line.split(sep).map(p => p.replace(/^["']|["']$/g,'').trim());
+    if (parts.length < 2) continue;
+    const s = parts[0].toUpperCase();
+    const n = parts[1];
+    // Header-Zeile überspringen
+    if (s === 'SYMBOL' || s === 'TICKER' || s === 'SYM') continue;
+    if (!s || !n || s.length > 20) continue;
+    result.push({ s, n });
+  }
+  return result;
+}
+
+// ── Drag & Drop ───────────────────────────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+dropZone.addEventListener('dragover',  e => { e.preventDefault(); dropZone.classList.add('over'); });
+dropZone.addEventListener('dragleave', () => dropZone.classList.remove('over'));
+dropZone.addEventListener('drop', e => {
+  e.preventDefault();
+  dropZone.classList.remove('over');
+  const file = e.dataTransfer.files[0];
+  if (file) window.handleFile(file);
+});
+
+// ── CSV importieren ───────────────────────────────────────────────────────────
+window.importCSV = async function() {
+  if (!parsedStocks.length) return;
+
+  const replaceId = document.getElementById('csvReplaceSelect').value;
+  const nameInput = document.getElementById('csvTabName').value.trim();
+
+  // Tab-ID und Label bestimmen
+  let tabId, tabLabel;
+  if (replaceId) {
+    tabId    = replaceId;
+    // Alten Label beibehalten falls kein neuer Name eingegeben
+    const old = await getDoc(doc(db,'config','stocks_'+replaceId));
+    tabLabel  = nameInput || (old.exists() ? old.data().label : replaceId);
+  } else {
+    if (!nameInput) { showStatus('importStatus','Bitte einen Reiter-Namen eingeben.','err'); return; }
+    tabId    = nameInput.toUpperCase().replace(/\s+/g,'_');
+    tabLabel = nameInput;
+  }
+
+  document.getElementById('importBtn').disabled    = true;
+  document.getElementById('importProgress').style.display = 'block';
+  document.getElementById('importStatus').className = 'status';
+
   try {
-    const snap = await getDocs(collection(db, 'cache'));
-    let count = 0;
-    for (const d of snap.docs) {
-      await deleteDoc(d.ref);
-      count++;
+    // In Batches speichern (Firestore 1MB Limit pro Dokument)
+    // ~2000 Einträge à 35 bytes = ~70KB → passt in ein Dokument
+    // Aber für sehr grosse Listen aufteilen (>3000 Einträge)
+    const BATCH_SIZE = 2000;
+    const batches = [];
+    for (let i = 0; i < parsedStocks.length; i += BATCH_SIZE) {
+      batches.push(parsedStocks.slice(i, i + BATCH_SIZE));
     }
+
+    setProgress('importFill','importText', 10, `Schreibe ${tabLabel} (${parsedStocks.length} Aktien)...`);
+
+    if (batches.length === 1) {
+      // Einzelnes Dokument
+      await setDoc(doc(db,'config','stocks_'+tabId), {
+        section:    tabId,
+        label:      tabLabel,
+        stocks:     parsedStocks,
+        updatedAt:  Date.now()
+      });
+    } else {
+      // Mehrere Dokumente für sehr grosse Listen
+      for (let i = 0; i < batches.length; i++) {
+        const suffix = i === 0 ? tabId : `${tabId}_part${i+1}`;
+        await setDoc(doc(db,'config','stocks_'+suffix), {
+          section:   tabId,
+          part:      i + 1,
+          totalParts: batches.length,
+          label:     tabLabel,
+          stocks:    batches[i],
+          updatedAt: Date.now()
+        });
+        setProgress('importFill','importText',
+          10 + (i+1)/batches.length*70,
+          `Teil ${i+1}/${batches.length} gespeichert...`);
+      }
+    }
+
+    // Index aktualisieren
+    setProgress('importFill','importText', 85, 'Index aktualisieren...');
+    const indexSnap = await getDoc(doc(db,'config','stocks_index'));
+    const sections  = indexSnap.exists() ? (indexSnap.data().sections || []) : [];
+    if (!sections.includes(tabId)) sections.push(tabId);
+    await setDoc(doc(db,'config','stocks_index'), { sections, updatedAt: Date.now() });
+
+    setProgress('importFill','importText', 100, '✓ Fertig');
+    showStatus('importStatus', `✅ ${tabLabel} mit ${parsedStocks.length} Aktien gespeichert.`, 'ok');
+
+    // Reset
+    parsedStocks = [];
+    document.getElementById('previewBox').style.display = 'none';
+    document.getElementById('csvFile').value = '';
+    document.getElementById('csvTabName').value = '';
+    document.getElementById('csvReplaceSelect').value = '';
+    loadTabList();
+  } catch(e) {
+    showStatus('importStatus', '❌ ' + e.message, 'err');
+  }
+  document.getElementById('importBtn').disabled = false;
+};
+
+// ── Leeren Reiter anlegen ─────────────────────────────────────────────────────
+window.createEmptyTab = async function() {
+  const id    = document.getElementById('newTabId').value.trim().toUpperCase().replace(/\s+/g,'_');
+  const label = document.getElementById('newTabLabel').value.trim();
+  if (!id || !label) { showStatus('newTabStatus','Bitte ID und Name eingeben.','err'); return; }
+
+  try {
+    await setDoc(doc(db,'config','stocks_'+id), {
+      section: id, label, stocks: [], updatedAt: Date.now()
+    });
+    const indexSnap = await getDoc(doc(db,'config','stocks_index'));
+    const sections  = indexSnap.exists() ? (indexSnap.data().sections || []) : [];
+    if (!sections.includes(id)) sections.push(id);
+    await setDoc(doc(db,'config','stocks_index'), { sections, updatedAt: Date.now() });
+
+    showStatus('newTabStatus', `✅ Reiter "${label}" angelegt. Jetzt CSV importieren um Aktien hinzuzufügen.`, 'ok');
+    document.getElementById('newTabId').value    = '';
+    document.getElementById('newTabLabel').value = '';
+    loadTabList();
+  } catch(e) {
+    showStatus('newTabStatus', '❌ ' + e.message, 'err');
+  }
+};
+
+// ── Reiter löschen ────────────────────────────────────────────────────────────
+window.confirmDelete = function(tabId, label) {
+  document.getElementById('confirmMsg').textContent =
+    `Reiter "${label}" wirklich löschen? Diese Aktion kann nicht rückgängig gemacht werden.`;
+  document.getElementById('confirmModal').style.display = 'flex';
+  confirmCallback = () => deleteTab(tabId, label);
+};
+
+window.confirmYes  = () => { closeConfirm(); if (confirmCallback) confirmCallback(); };
+window.closeConfirm = () => { document.getElementById('confirmModal').style.display = 'none'; confirmCallback = null; };
+
+async function deleteTab(tabId, label) {
+  try {
+    // Dokument löschen (auch Parts falls vorhanden)
+    await deleteDoc(doc(db,'config','stocks_'+tabId));
+    // Parts löschen
+    for (let i = 2; i <= 10; i++) {
+      try { await deleteDoc(doc(db,'config',`stocks_${tabId}_part${i}`)); } catch {}
+    }
+    // Index aktualisieren
+    const indexSnap = await getDoc(doc(db,'config','stocks_index'));
+    if (indexSnap.exists()) {
+      const sections = (indexSnap.data().sections || []).filter(s => s !== tabId);
+      await setDoc(doc(db,'config','stocks_index'), { sections, updatedAt: Date.now() });
+    }
+    showStatus('tabListStatus', `✅ Reiter "${label}" gelöscht.`, 'ok');
+    loadTabList();
+  } catch(e) {
+    showStatus('tabListStatus', '❌ ' + e.message, 'err');
+  }
+}
+
+// ── Cache leeren ──────────────────────────────────────────────────────────────
+window.clearCache = async function() {
+  if (!confirm('Wirklich den gesamten Cache leeren?')) return;
+  showStatus('cacheStatus','⏳ Cache wird gelöscht...','info');
+  try {
+    const snap = await getDocs(collection(db,'cache'));
+    let count = 0;
+    for (const d of snap.docs) { await deleteDoc(d.ref); count++; }
     showStatus('cacheStatus', `✅ ${count} Cache-Einträge gelöscht.`, 'ok');
   } catch(e) {
-    showStatus('cacheStatus', '❌ Fehler: ' + e.message, 'err');
+    showStatus('cacheStatus', '❌ ' + e.message, 'err');
   }
-  btn.disabled = false;
 };
 </script>
 </body>
