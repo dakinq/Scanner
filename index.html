@@ -1550,7 +1550,11 @@ window.loadAllData = async () => {
   const allSections = [...new Set(Object.values(ALL_STOCKS).flatMap(s=>s.indices))];
   const idxFilter = activeIndex==='ALL' ? allSections : [activeIndex];
   const toLoad=[];
-  idxFilter.forEach(idx=>STOCKS[idx].forEach(({s})=>{ if(!toLoad.includes(s)) toLoad.push(s); }));
+  // Symbole aus ALL_STOCKS holen (Firestore-Liste) statt hardcodierter STOCKS
+  Object.entries(ALL_STOCKS).forEach(([s, info]) => {
+    const inFilter = idxFilter.some(idx => (info.indices||[]).includes(idx));
+    if (inFilter && !toLoad.includes(s)) toLoad.push(s);
+  });
 
   const errors=[];
 
@@ -2661,26 +2665,21 @@ async function seLoadCustomFromFirestore() {
   if (!currentUser) return;
   try {
     const snap = await getDocs(collection(db,'users',currentUser.uid,'stockList'));
+    // User-Ergänzungen direkt in ALL_STOCKS einpflegen
     snap.forEach(d => {
       const {idx, sym, name, tv} = d.data();
-      if (!idx || !sym || !name || !STOCKS[idx]) return;
-      const exists = STOCKS[idx].some(e => e.s === sym);
-      if (!exists) STOCKS[idx].push({s:sym, n:name, tv: tv||undefined});
-      else { const e=STOCKS[idx].find(e=>e.s===sym); if(e){ e.n=name; if(tv) e.tv=tv; } }
+      if (!idx || !sym || !name) return;
+      if (!ALL_STOCKS[sym]) ALL_STOCKS[sym] = { name, indices: [], tv: tv || defaultTvSymbol(sym) };
+      else { if (name) ALL_STOCKS[sym].name = name; if (tv) ALL_STOCKS[sym].tv = tv; }
+      if (!ALL_STOCKS[sym].indices.includes(idx)) ALL_STOCKS[sym].indices.push(idx);
     });
+    // User-Löschungen aus ALL_STOCKS entfernen
     const delSnap = await getDocs(collection(db,'users',currentUser.uid,'stockListDeleted'));
     delSnap.forEach(d => {
       const {idx, sym} = d.data();
-      if (!idx || !sym || !STOCKS[idx]) return;
-      STOCKS[idx] = STOCKS[idx].filter(e => e.s !== sym);
-    });
-    Object.keys(ALL_STOCKS).forEach(k => delete ALL_STOCKS[k]);
-    Object.entries(STOCKS).forEach(([idx,list]) => {
-      list.forEach(({s,n,tv}) => {
-        if(!ALL_STOCKS[s]) ALL_STOCKS[s]={name:n,indices:[], tv: tv || defaultTvSymbol(s)};
-        else if (tv) ALL_STOCKS[s].tv = tv;
-        if(!ALL_STOCKS[s].indices.includes(idx)) ALL_STOCKS[s].indices.push(idx);
-      });
+      if (!sym || !ALL_STOCKS[sym]) return;
+      ALL_STOCKS[sym].indices = (ALL_STOCKS[sym].indices||[]).filter(i => i !== idx);
+      if (!ALL_STOCKS[sym].indices.length) delete ALL_STOCKS[sym];
     });
   } catch(e) { console.error('seLoadCustomFromFirestore:', e); }
 }
