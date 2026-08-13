@@ -992,28 +992,33 @@ async function loadStocksFromFirestore() {
     const sections = indexSnap.data().sections || [];
     const firestoreStocks = {};
 
-    await Promise.all(sections.map(async section => {
-      const snap = await getDoc(doc(db,'config','stocks_'+section));
-      if (!snap.exists()) return;
-      const data = snap.data();
+    // Sequenziell laden statt parallel - verhindert Überlastung
+    for (const section of sections) {
+      try {
+        const snap = await getDoc(doc(db,'config','stocks_'+section));
+        if (!snap.exists()) continue;
+        const data = snap.data();
 
-      // Mehrteilige Reiter zusammensetzen (z.B. Russell 2000)
-      if (data.totalParts && data.totalParts > 1) {
-        let allStocks = [...(data.stocks || [])];
-        for (let i = 2; i <= data.totalParts; i++) {
-          try {
-            const partSnap = await getDoc(doc(db,'config',`stocks_${section}_part${i}`));
-            if (partSnap.exists()) allStocks = allStocks.concat(partSnap.data().stocks || []);
-          } catch {}
+        // Label für INDEX_LABELS registrieren falls vorhanden
+        if (data.label) INDEX_LABELS[section] = data.label;
+
+        // Mehrteilige Reiter zusammensetzen (z.B. Russell 2000)
+        if (data.totalParts && data.totalParts > 1) {
+          let allStocks = [...(data.stocks || [])];
+          for (let i = 2; i <= data.totalParts; i++) {
+            try {
+              const partSnap = await getDoc(doc(db,'config',`stocks_${section}_part${i}`));
+              if (partSnap.exists()) allStocks = allStocks.concat(partSnap.data().stocks || []);
+            } catch {}
+          }
+          firestoreStocks[section] = allStocks;
+        } else {
+          firestoreStocks[section] = data.stocks || [];
         }
-        firestoreStocks[section] = allStocks;
-      } else {
-        firestoreStocks[section] = data.stocks || [];
+      } catch(e) {
+        console.warn(`loadStocksFromFirestore [${section}]:`, e.message);
       }
-
-      // Label für INDEX_LABELS registrieren falls vorhanden
-      if (data.label) INDEX_LABELS[section] = data.label;
-    }));
+    }
 
     if (Object.keys(firestoreStocks).length > 0) {
       rebuildAllStocks(firestoreStocks);
@@ -1347,6 +1352,26 @@ async function disablePush() {
 }
 
 // ── Error Persistence ────────────────────────────────────────────────────────
+function downloadErrorCSV(errors) {
+  // Symbole mit Namen aus ALL_STOCKS anreichern
+  const rows = errors.map(sym => {
+    const name = ALL_STOCKS[sym]?.name ?? stockData[sym]?.name ?? '';
+    // Sonderzeichen im Namen escapen
+    const safeName = name.includes(',') ? `"${name}"` : name;
+    return `${sym},${safeName}`;
+  });
+  const csv = 'Symbol,Name\n' + rows.join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const url  = URL.createObjectURL(blob);
+  const a    = document.createElement('a');
+  a.href     = url;
+  a.download = `scan_fehler_${new Date().toISOString().slice(0,10)}.csv`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
 async function saveErrorsToFirestore(errors) {
   if (!currentUser) return;
   try {
@@ -1640,8 +1665,9 @@ window.loadAllData = async () => {
   seSetErrors(errors);
   if(errors.length) {
     const em=document.getElementById('errorMsg');
-    em.textContent=`Fehler bei ${errors.length} Aktien: ${errors.slice(0,6).join(', ')}${errors.length>6?' ...':''}`;
+    em.innerHTML=`⚠️ Fehler bei ${errors.length} Aktien: ${errors.slice(0,6).join(', ')}${errors.length>6?' ...':''}<div class="err-hint">📥 Tippen um CSV mit allen fehlerhaften Titeln herunterzuladen</div>`;
     em.classList.add('visible');
+    em.onclick = () => downloadErrorCSV(errors);
   }
   const n=Object.keys(stockData).length;
   if(n>0) {
@@ -3123,8 +3149,10 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .result-count{font-size:12px;color:var(--muted)}
 .result-count span{color:var(--text);font-weight:700}
 .sort-select{background:var(--surf);border:1px solid var(--border);border-radius:6px;color:var(--text);font-size:11px;padding:4px 7px;outline:none}
-.error-msg{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);border-radius:10px;padding:10px 14px;font-size:12px;color:#fca5a5;margin:10px 14px;display:none}
+.error-msg{background:rgba(239,68,68,.1);border:1px solid rgba(239,68,68,.25);border-radius:10px;padding:10px 14px;font-size:12px;color:#fca5a5;margin:10px 14px;display:none;cursor:pointer;user-select:none}
 .error-msg.visible{display:block}
+.error-msg:hover{background:rgba(239,68,68,.18);border-color:rgba(239,68,68,.5)}
+.error-msg .err-hint{font-size:11px;color:#f87171;margin-top:4px;opacity:.8}
 .cards-grid{padding:10px 10px 60px;display:flex;flex-direction:column;gap:10px}
 .stock-card{background:var(--surf);border:1px solid var(--border);border-radius:14px;overflow:hidden;cursor:pointer}
 .stock-card:active{border-color:var(--accent)}
