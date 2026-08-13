@@ -353,10 +353,12 @@ window.importCSV = async function() {
   // Tab-ID und Label bestimmen
   let tabId, tabLabel;
   if (replaceId) {
-    tabId    = replaceId;
-    // Alten Label beibehalten falls kein neuer Name eingegeben
-    const old = await getDoc(doc(db,'config','stocks_'+replaceId));
-    tabLabel  = nameInput || (old.exists() ? old.data().label : replaceId);
+    tabId = replaceId;
+    try {
+      const oldSnap = await getDoc(doc(db,'config','stocks_'+replaceId));
+      tabLabel = nameInput || (oldSnap.exists() ? (oldSnap.data().label || replaceId) : replaceId);
+    } catch { tabLabel = nameInput || replaceId; }
+    tabLabel = tabLabel || replaceId;
   } else {
     if (!nameInput) { showStatus('importStatus','Bitte einen Reiter-Namen eingeben.','err'); return; }
     tabId    = nameInput.toUpperCase().replace(/\s+/g,'_');
