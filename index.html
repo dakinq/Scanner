@@ -901,39 +901,60 @@ function computeMetrics(candles) {
 }
 
 // ── Auth ─────────────────────────────────────────────────────────────────────
-onAuthStateChanged(auth, async user => {
+onAuthStateChanged(auth, user => {
   currentUser = user;
   if (user) {
+    // Sofort UI zeigen — KEIN await hier, nichts blockiert den Auth-State
     document.getElementById('loginScreen').style.display='none';
     document.getElementById('appShell').style.display='flex';
 
-    // Admin prüfen
-    try {
-      const adminSnap = await getDoc(doc(db,'config','admins'));
-      isAdmin = adminSnap.exists() && (adminSnap.data().uids||[]).includes(user.uid);
-    } catch(e) { isAdmin = false; }
-
-    // Aktien-Liste aus Firestore laden (überschreibt hardcodierte STOCKS)
-    await loadStocksFromFirestore();
-
-    // Custom-Tabs laden
-    await loadCustomTabs();
-
-    // Tabs rendern
-    renderIndexTabs();
-
-    await seLoadCustomFromFirestore();
-    await loadErrorsFromFirestore();
-    loadFromFirestore();
-    loadFilterFavorites();
-    loadAlerts();
-    refreshPushStatus();
+    // Alles im Hintergrund laden ohne den Auth-Callback zu blockieren
+    initApp(user).catch(e => console.error('initApp:', e));
   } else {
     document.getElementById('loginScreen').style.display='flex';
     document.getElementById('appShell').style.display='none';
     isAdmin = false;
   }
 });
+
+// Initialisierung komplett im Hintergrund
+async function initApp(user) {
+  try {
+    // 1. Admin prüfen (schnell, ein Request)
+    try {
+      const adminSnap = await getDoc(doc(db,'config','admins'));
+      isAdmin = adminSnap.exists() && (adminSnap.data().uids||[]).includes(user.uid);
+    } catch(e) { isAdmin = false; }
+
+    // 2. Aktien-Liste aus Firestore (kann lange dauern bei Russell 2000)
+    //    Läuft komplett im Hintergrund, App ist bereits nutzbar
+    setStatus('loading', 'Lade Aktien-Liste...');
+    await loadStocksFromFirestore();
+
+    // 3. Custom-Tabs laden
+    await loadCustomTabs();
+
+    // 4. Tabs rendern (erst wenn Liste geladen)
+    renderIndexTabs();
+
+    // 5. Rest parallel — alles leichtgewichtig
+    await Promise.allSettled([
+      seLoadCustomFromFirestore(),
+      loadErrorsFromFirestore(),
+    ]);
+
+    // 6. User-Daten und UI
+    loadFromFirestore();
+    loadFilterFavorites();
+    loadAlerts();
+    refreshPushStatus();
+
+  } catch(e) {
+    console.error('initApp Fehler:', e);
+    // App trotzdem nutzbar lassen, nur Status setzen
+    setStatus('live', 'Fehler beim Laden — bitte neu laden');
+  }
+}
 
 window.doLogin = async () => {
   try { await signInWithPopup(auth, new GoogleAuthProvider()); }
