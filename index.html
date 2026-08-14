@@ -1618,12 +1618,15 @@ async function loadFromFirestoreCache() {
         if (stockData[sym]?.candles?.length) return;
         const cached = await loadFromSharedCache(sym);
         if (cached?.candles?.length) {
+          const info = ALL_STOCKS[sym] ?? { name: sym, indices: [] };
           stockData[sym] = {
             ...stockData[sym],
             candles:      cached.candles,
             metrics:      cached.metrics ?? computeMetrics(cached.candles),
             fundamentals: cached.fundamentals || stockData[sym]?.fundamentals || {},
             lastUpdated:  cached.lastUpdated  || stockData[sym]?.lastUpdated  || 0,
+            name:         cached.fundamentals?.longName || cached.name || info.name || sym,
+            indices:      info.indices,
           };
         }
       }));
