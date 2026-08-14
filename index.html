@@ -838,19 +838,7 @@ function rebuildAllStocks(stocks) {
   });
 }
 
-// Async Version für grosse Listen (wird in loadStocksFromFirestore genutzt)
-async function rebuildAllStocksAsync(stocks) {
-  ALL_STOCKS = {};
-  for (const [idx, list] of Object.entries(stocks)) {
-    list.forEach(({s,n,tv}) => {
-      if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [], tv: tv || defaultTvSymbol(s) };
-      else if (tv) ALL_STOCKS[s].tv = tv;
-      if (!ALL_STOCKS[s].indices.includes(idx)) ALL_STOCKS[s].indices.push(idx);
-    });
-    // Kurze Pause damit iOS nicht abstürzt
-    await new Promise(r => setTimeout(r, 0));
-  }
-}
+
 
 // Initiale Befüllung aus hardcodierten STOCKS (Fallback falls Firestore leer)
 rebuildAllStocks(STOCKS); // synchron beim Start, async nur in loadStocksFromFirestore
@@ -867,7 +855,7 @@ let isLoading    = false;
 let isAdmin      = false;
 let customTabs   = {}; // persönliche Reiter des Users
 let lazyTabs     = {}; // Reiter die noch nicht geladen sind {sectionId: {label, totalParts}}
-const LAZY_THRESHOLD = 300; // Sektionen mit mehr als X Symbolen werden lazy geladen
+const LAZY_THRESHOLD = 500; // Sektionen mit mehr als X Symbolen werden lazy geladen (SP500, Russell etc.)
 
 // ── Cloudflare Worker Proxy ───────────────────────────────────────────────────
 // Deploy worker.js to Cloudflare and paste your worker URL here:
@@ -933,44 +921,33 @@ onAuthStateChanged(auth, user => {
   }
 });
 
-// Initialisierung: sofort nutzbar, schwere Operationen im Hintergrund
+// Initialisierung: minimal beim Start, kein automatisches Laden
 async function initApp(user) {
   try {
-    // ── Phase 1: Sofort (< 1 Sekunde) ────────────────────────────────────────
-    // User-Daten aus Cache laden → App ist sofort nutzbar
-    setStatus('loading', 'Lade...');
-    await loadFromFirestore();          // gecachte Aktien sofort anzeigen
-    loadFilterFavorites();
-    loadAlerts();
-    refreshPushStatus();
+    // Nur leichtgewichtige Operationen beim Start
+    setStatus('', 'Bereit');
 
-    // Tabs mit hardcodierter Liste sofort rendern
-    renderIndexTabs();
-
-    // App ist jetzt nutzbar — iOS Timeout überschritten? Egal, wir laufen schon
-    if (Object.keys(stockData).length > 0) {
-      document.getElementById('filterSection').classList.add('visible');
-      applyCurrentFilter();
-      // Candles im Hintergrund nachladen für Filter und Charts
-      loadCandlesInBackground();
-    }
-
-    // ── Phase 2: Hintergrund (kann länger dauern) ─────────────────────────────
-    // Admin prüfen
+    // Admin prüfen (ein Request, schnell)
     getDoc(doc(db,'config','admins'))
       .then(snap => { isAdmin = snap.exists() && (snap.data().uids||[]).includes(user.uid); })
       .catch(() => {});
 
-    // Aktien-Liste aus Firestore — komplett im Hintergrund, kein await
+    // Aktien-Liste (nur Namen/Sektionen, keine Candles) im Hintergrund
     loadStocksInBackground();
 
-    // Fehler-Liste laden
+    // Leichtgewichtige User-Einstellungen
+    loadFilterFavorites();
+    loadAlerts();
+    refreshPushStatus();
     loadErrorsFromFirestore().catch(()=>{});
     seLoadCustomFromFirestore().catch(()=>{});
 
+    // Button Text anpassen
+    document.getElementById('loadBtn').textContent = 'Daten laden';
+
   } catch(e) {
     console.error('initApp Fehler:', e);
-    setStatus('live', 'Fehler beim Laden — bitte neu laden');
+    setStatus('', 'Fehler beim Start');
   }
 }
 
@@ -990,61 +967,7 @@ function loadStocksInBackground() {
 
 // Lädt Candles aus dem Cache in kleinen Batches im Hintergrund
 // Nach jedem Batch wird der Filter neu angewendet
-function loadCandlesInBackground() {
-  const syms = Object.keys(stockData).filter(s => !stockData[s].candles?.length);
-  if (!syms.length) return;
 
-  const BATCH = 3; // sehr klein damit iOS nicht abstürzt
-  let i = 0;
-
-  async function loadNext() {
-    if (i >= syms.length) {
-      // Alle geladen → finaler Filter
-      applyCurrentFilter();
-      setStatus('live', `${Object.keys(stockData).length} Aktien · Candles geladen`);
-      return;
-    }
-    const chunk = syms.slice(i, i + BATCH);
-    for (const sym of chunk) {
-      try {
-        const cached = await loadFromSharedCache(sym);
-        if (cached?.candles?.length) {
-          stockData[sym] = {
-            ...stockData[sym],
-            candles:      cached.candles,
-            metrics:      cached.metrics ?? computeMetrics(cached.candles),
-            fundamentals: cached.fundamentals || stockData[sym]?.fundamentals || {},
-          };
-        }
-      } catch(e) {
-        console.warn(`loadCandlesInBackground [${sym}]:`, e.message);
-      }
-      await new Promise(r => setTimeout(r, 5));
-    }
-    i += BATCH;
-    // Sichtbare Charts neu zeichnen die jetzt Candles haben
-    refreshVisibleCharts();
-    // Nächsten Batch mit kurzer Pause starten
-    setTimeout(loadNext, 50);
-  }
-
-  // Erst nach 1 Sekunde starten damit App erst stabil läuft
-  setTimeout(loadNext, 1000);
-}
-
-// Zeichnet Charts für sichtbare Karten neu die jetzt Candles haben
-function refreshVisibleCharts() {
-  document.querySelectorAll('.stock-card[data-sym]').forEach(card => {
-    const sym = card.dataset.sym;
-    if (!sym || !stockData[sym]?.candles?.length) return;
-    const chartEl = card.querySelector(`#chart-${sym.replace(/\./g,'_').replace(/\//g,'_')}`);
-    if (!chartEl) return;
-    // Chart noch nicht gezeichnet → jetzt zeichnen
-    if (!activeCharts[sym]) {
-      renderMiniChart(sym);
-    }
-  });
-}
 
 window.doLogin = async () => {
   try { await signInWithPopup(auth, new GoogleAuthProvider()); }
@@ -1148,7 +1071,7 @@ async function loadStocksFromFirestore() {
     }
 
     if (Object.keys(firestoreStocks).length > 0) {
-      await rebuildAllStocksAsync(firestoreStocks);
+      rebuildAllStocks(firestoreStocks);
     }
   } catch(e) {
     // Kompletter Fehler: hardcodierte STOCKS bleiben aktiv
@@ -1323,42 +1246,10 @@ function confirmDeleteTab(tabId) {
   }
 }
 
+// loadFromFirestore wird nicht mehr automatisch beim Start aufgerufen.
+// Daten werden nur noch manuell über den "Daten laden" Button geladen.
 async function loadFromFirestore() {
-  if (!currentUser) return;
-  setStatus('loading','Lade gespeicherte Daten...');
-  try {
-    const snap = await getDocs(collection(db,'users',currentUser.uid,'stocks'));
-    snap.forEach(d => {
-      const raw = d.data();
-      // NUR Metadaten laden — keine Candles (die sind im cache/{symbol})
-      // candles werden on-demand beim Scan aus dem Cache geladen
-      stockData[d.id] = {
-        name:        raw.name,
-        indices:     raw.indices || [],
-        metrics:     raw.metrics || null,
-        fundamentals:raw.fundamentals || {},
-        lastUpdated: raw.lastUpdated || 0,
-        candles:     [], // leer bis zum nächsten Scan
-      };
-    });
-    const n = Object.keys(stockData).length;
-    if (n > 0) {
-      const ts = Math.max(...snap.docs.map(d => d.data().lastUpdated||0));
-      const dateStr = ts ? new Date(ts).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-      setStatus('live',`${n} Aktien${dateStr?' · '+dateStr:''}`);
-      document.getElementById('loadBtn').textContent = 'Aktualisieren';
-      document.getElementById('filterSection').classList.add('visible');
-      applyCurrentFilter();
-    } else {
-      setStatus('','Bereit - noch keine Daten');
-    }
-  } catch(e) {
-    setStatus('','Firestore Fehler');
-    const em = document.getElementById('errorMsg');
-    em.textContent = `Firestore Ladefehler: ${e.code||e.message}`;
-    em.classList.add('visible');
-    console.error('loadFromFirestore:', e);
-  }
+  // Nicht mehr verwendet beim Start - bleibt als Fallback
 }
 
 // ── Price Alerts (Firestore) ──────────────────────────────────────────────────
@@ -1746,10 +1637,18 @@ window.loadAllData = async () => {
   document.getElementById('loadBtn').disabled=true;
   document.getElementById('errorMsg').classList.remove('visible');
   showProgress(true);
+
+  // Lazy Tab zuerst laden falls noch nicht geschehen
+  if (activeIndex !== 'ALL' && lazyTabs[activeIndex] && !lazyTabs[activeIndex].loaded) {
+    await loadLazyTab(activeIndex);
+    renderIndexTabs();
+  }
+
   const allSections = [...new Set(Object.values(ALL_STOCKS).flatMap(s=>s.indices))];
+  // "Alle" → nur bereits geladene Sektionen (was im RAM ist + lazy tabs die geladen wurden)
+  // Aktiver Reiter → nur dieser Reiter
   const idxFilter = activeIndex==='ALL' ? allSections : [activeIndex];
   const toLoad=[];
-  // Symbole aus ALL_STOCKS holen (Firestore-Liste) statt hardcodierter STOCKS
   Object.entries(ALL_STOCKS).forEach(([s, info]) => {
     const inFilter = idxFilter.some(idx => (info.indices||[]).includes(idx));
     if (inFilter && !toLoad.includes(s)) toLoad.push(s);
@@ -1769,27 +1668,26 @@ window.loadAllData = async () => {
   const total = toLoad.length;
 
   try {
-    // ── Schritt 1: Candles aus Cache laden (sequenziell, kleine Batches) ──
-    // Candles sind nicht mehr beim Start im RAM → jetzt on-demand laden
-    const CACHE_BATCH = 5; // klein halten damit iOS nicht abstürzt
+    // ── Schritt 1: Candles aus Cache laden (parallel, in Batches) ──
+    const CACHE_BATCH = 20;
     for(let i=0; i<needsLoad.length; i+=CACHE_BATCH) {
       const chunk = needsLoad.slice(i, i+CACHE_BATCH);
-      for (const sym of chunk) {
-        if (stockData[sym]?.candles?.length) continue; // bereits geladen
+      await Promise.all(chunk.map(async sym => {
+        if (stockData[sym]?.candles?.length) return;
         const cached = await loadFromSharedCache(sym);
         if (cached?.candles?.length) {
           stockData[sym] = {
-            ...stockData[sym], // Metadaten beibehalten
-            candles:     cached.candles,
-            metrics:     cached.metrics ?? computeMetrics(cached.candles),
-            fundamentals:cached.fundamentals || stockData[sym]?.fundamentals || {},
-            lastUpdated: cached.lastUpdated || stockData[sym]?.lastUpdated || 0,
+            ...stockData[sym],
+            candles:      cached.candles,
+            metrics:      cached.metrics ?? computeMetrics(cached.candles),
+            fundamentals: cached.fundamentals || stockData[sym]?.fundamentals || {},
+            lastUpdated:  cached.lastUpdated  || stockData[sym]?.lastUpdated  || 0,
           };
         }
-        // Kurze Pause damit iOS atmen kann
-        await new Promise(r => setTimeout(r, 10));
-      }
-      // Nach jedem Batch UI aktualisieren
+      }));
+    }
+    // Nach Cache-Load direkt anzeigen
+    if (Object.keys(stockData).length > 0) {
       applyCurrentFilter();
       document.getElementById('filterSection').classList.add('visible');
     }
@@ -1847,6 +1745,7 @@ window.loadAllData = async () => {
     const latestTs = Math.max(...Object.values(stockData).map(d=>d.lastUpdated||0));
     const dateStr = latestTs ? new Date(latestTs).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
     setStatus('live',`${n} Aktien${dateStr?' · '+dateStr:''}`);
+    document.getElementById('loadBtn').textContent = 'Aktualisieren';
     document.getElementById('filterSection').classList.add('visible');
     applyCurrentFilter();
   }
