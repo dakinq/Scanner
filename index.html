@@ -993,7 +993,35 @@ window.doLogin = async () => {
 window.doLogout = () => signOut(auth);
 
 // ── Firestore ─────────────────────────────────────────────────────────────────
+// Write-Queue: verhindert resource-exhausted bei vielen parallelen Saves
+const _fsQueue = [];
+let   _fsRunning = false;
+
+async function _fsFlush() {
+  if (_fsRunning) return;
+  _fsRunning = true;
+  while (_fsQueue.length > 0) {
+    const { symbol, candles, metrics, fundamentals, resolve, reject } = _fsQueue.shift();
+    try {
+      await _doSaveToFirestore(symbol, candles, metrics, fundamentals);
+      resolve();
+    } catch(e) {
+      reject(e);
+    }
+    // 150ms Pause zwischen Writes – verhindert Write-Stream-Überlastung
+    if (_fsQueue.length > 0) await new Promise(r => setTimeout(r, 150));
+  }
+  _fsRunning = false;
+}
+
 async function saveToFirestore(symbol, candles, metrics, fundamentals={}) {
+  return new Promise((resolve, reject) => {
+    _fsQueue.push({ symbol, candles, metrics, fundamentals, resolve, reject });
+    _fsFlush();
+  });
+}
+
+async function _doSaveToFirestore(symbol, candles, metrics, fundamentals={}) {
   if (!currentUser) return;
 
   const candlesStr = JSON.stringify(candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume]));
@@ -1016,7 +1044,7 @@ async function saveToFirestore(symbol, candles, metrics, fundamentals={}) {
       candles: candlesStr,
     });
   } catch(e) {
-    console.warn(`Shared cache write [${symbol}]:`, e.message);
+    console.warn('Shared cache write [' + symbol + ']:', e.message);
   }
 }
 
@@ -1751,9 +1779,10 @@ async function refreshFromYahoo() {
             indices: info.indices,
             lastUpdated: Date.now()
           };
+          // Save wird in die gedrosselte Queue eingereiht (kein fire-and-forget)
           saveToFirestore(sym, candles, metrics, mergedFund).catch(e=>{
-            console.error(`Firestore save failed [${sym}]:`, e.code||e.message);
-            errors.push(`${sym}(DB)`);
+            console.error('Firestore save failed [' + sym + ']:', e.code||e.message);
+            errors.push(sym + '(DB)');
           });
         } catch(e) {
           console.warn(`Failed [${sym}]:`, e.message);
@@ -1764,6 +1793,19 @@ async function refreshFromYahoo() {
     }
   } catch(fatalErr) {
     console.error('refreshFromYahoo fatal error:', fatalErr);
+  }
+
+  // Warten bis alle Firestore-Writes durch die Queue abgearbeitet sind
+  if (_fsQueue.length > 0 || _fsRunning) {
+    updateProgress(0, 1, 'Speichere in Firestore...');
+    await new Promise(resolve => {
+      const check = setInterval(() => {
+        if (_fsQueue.length === 0 && !_fsRunning) {
+          clearInterval(check);
+          resolve();
+        }
+      }, 300);
+    });
   }
 
   showProgress(false);
