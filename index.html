@@ -852,6 +852,7 @@ let activeCharts = {};
 let modalChartInst = null;
 let currentUser  = null;
 let isLoading    = false;
+let dataLoaded   = false;   // true nach erstem Firestore-Load → Button zeigt "Aktualisieren"
 let isAdmin      = false;
 let customTabs   = {}; // persönliche Reiter des Users
 
@@ -1582,14 +1583,23 @@ async function fetchCandlesAndFundamentals(symbol, days=CANDLE_DAYS) {
 // ── Main Load ─────────────────────────────────────────────────────────────────
 window.loadAllData = async () => {
   if (isLoading) return;
+  // Zweiter Klick → Yahoo-Aktualisierung
+  if (dataLoaded) {
+    await refreshFromYahoo();
+    return;
+  }
+  // Erster Klick → nur Firestore-Cache laden
+  await loadFromFirestoreCache();
+};
+
+// ── Phase 1: Daten aus Firestore-Cache laden ──────────────────────────────────
+async function loadFromFirestoreCache() {
   isLoading=true;
   document.getElementById('loadBtn').disabled=true;
   document.getElementById('errorMsg').classList.remove('visible');
   showProgress(true);
 
   const allSections = [...new Set(Object.values(ALL_STOCKS).flatMap(s=>s.indices))];
-  // "Alle" → nur bereits geladene Sektionen (was im RAM ist + lazy tabs die geladen wurden)
-  // Aktiver Reiter → nur dieser Reiter
   const idxFilter = activeIndex==='ALL' ? allSections : [activeIndex];
   const toLoad=[];
   Object.entries(ALL_STOCKS).forEach(([s, info]) => {
@@ -1597,24 +1607,13 @@ window.loadAllData = async () => {
     if (inFilter && !toLoad.includes(s)) toLoad.push(s);
   });
 
-  const errors=[];
-
-  // Alle bisherigen Fehler sofort löschen – frischer Start
-  seLastErrors = [];
-  saveErrorsToFirestore([]).catch(()=>{});
-  seUpdateErrorBtn();
-  document.getElementById('errorMsg').classList.remove('visible');
-
-  // Immer alle Stocks laden – beim Drücken von "Aktualisieren" soll alles aktuell sein.
-  // needsUpdate nur für automatische Hintergrund-Refreshes, nicht für manuelle Aktion.
-  const needsLoad = toLoad;
   const total = toLoad.length;
 
   try {
-    // ── Schritt 1: Candles aus Cache laden (parallel, in Batches) ──
     const CACHE_BATCH = 20;
-    for(let i=0; i<needsLoad.length; i+=CACHE_BATCH) {
-      const chunk = needsLoad.slice(i, i+CACHE_BATCH);
+    for(let i=0; i<toLoad.length; i+=CACHE_BATCH) {
+      const chunk = toLoad.slice(i, i+CACHE_BATCH);
+      updateProgress(i, total, `${i+1}–${Math.min(i+CACHE_BATCH, toLoad.length)} von ${total} (Firestore)`);
       await Promise.all(chunk.map(async sym => {
         if (stockData[sym]?.candles?.length) return;
         const cached = await loadFromSharedCache(sym);
@@ -1628,18 +1627,61 @@ window.loadAllData = async () => {
           };
         }
       }));
+      // Nach jedem Batch direkt anzeigen
+      if (Object.keys(stockData).length > 0) {
+        applyCurrentFilter();
+        document.getElementById('filterSection').classList.add('visible');
+      }
     }
-    // Nach Cache-Load direkt anzeigen
-    if (Object.keys(stockData).length > 0) {
-      applyCurrentFilter();
-      document.getElementById('filterSection').classList.add('visible');
-    }
+  } catch(fatalErr) {
+    console.error('loadFromFirestoreCache fatal error:', fatalErr);
+  }
 
-    // ── Schritt 2: Nur fehlende/veraltete Tage von Yahoo nachladen ──
+  showProgress(false);
+  isLoading=false;
+  document.getElementById('loadBtn').disabled=false;
+
+  const n=Object.keys(stockData).length;
+  if(n>0) {
+    const latestTs = Math.max(...Object.values(stockData).map(d=>d.lastUpdated||0));
+    const dateStr = latestTs ? new Date(latestTs).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    setStatus('live',`${n} Aktien${dateStr?' · '+dateStr:''}`);
+    dataLoaded = true;
+    document.getElementById('loadBtn').textContent = 'Aktualisieren';
+    document.getElementById('filterSection').classList.add('visible');
+    applyCurrentFilter();
+  }
+}
+
+// ── Phase 2: Yahoo-Aktualisierung ─────────────────────────────────────────────
+async function refreshFromYahoo() {
+  isLoading=true;
+  document.getElementById('loadBtn').disabled=true;
+  document.getElementById('errorMsg').classList.remove('visible');
+  showProgress(true);
+
+  const allSections = [...new Set(Object.values(ALL_STOCKS).flatMap(s=>s.indices))];
+  const idxFilter = activeIndex==='ALL' ? allSections : [activeIndex];
+  const toLoad=[];
+  Object.entries(ALL_STOCKS).forEach(([s, info]) => {
+    const inFilter = idxFilter.some(idx => (info.indices||[]).includes(idx));
+    if (inFilter && !toLoad.includes(s)) toLoad.push(s);
+  });
+
+  const errors=[];
+
+  // Fehler zurücksetzen
+  seLastErrors = [];
+  saveErrorsToFirestore([]).catch(()=>{});
+  seUpdateErrorBtn();
+
+  const total = toLoad.length;
+
+  try {
     const BATCH = 10;
-    for(let i=0; i<needsLoad.length; i+=BATCH) {
-      const chunk = needsLoad.slice(i, i+BATCH);
-      updateProgress(i, total, `${i+1}–${Math.min(i+BATCH,needsLoad.length)} von ${needsLoad.length} (${total} gesamt)`);
+    for(let i=0; i<toLoad.length; i+=BATCH) {
+      const chunk = toLoad.slice(i, i+BATCH);
+      updateProgress(i, total, `${i+1}–${Math.min(i+BATCH, toLoad.length)} von ${total} (Yahoo)`);
       await Promise.all(chunk.map(async sym=>{
         try {
           const days = needsBackfill(sym) ? CANDLE_DAYS : Math.min(missingDays(sym)+5, CANDLE_DAYS);
@@ -1669,7 +1711,7 @@ window.loadAllData = async () => {
       await new Promise(r=>setTimeout(r,300));
     }
   } catch(fatalErr) {
-    console.error('loadAllData fatal error:', fatalErr);
+    console.error('refreshFromYahoo fatal error:', fatalErr);
   }
 
   showProgress(false);
@@ -1688,11 +1730,10 @@ window.loadAllData = async () => {
     const latestTs = Math.max(...Object.values(stockData).map(d=>d.lastUpdated||0));
     const dateStr = latestTs ? new Date(latestTs).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
     setStatus('live',`${n} Aktien${dateStr?' · '+dateStr:''}`);
-    document.getElementById('loadBtn').textContent = 'Aktualisieren';
     document.getElementById('filterSection').classList.add('visible');
     applyCurrentFilter();
   }
-};
+}
 
 // ── Filter ────────────────────────────────────────────────────────────────────
 window.setIndex = async (idx,el) => {
