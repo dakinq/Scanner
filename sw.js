@@ -1,4 +1,4 @@
-const CACHE = 'stock-scanner-v3';
+const CACHE = 'stock-scanner-v5';
 
 self.addEventListener('install', e => {
   // Kein Pre-Caching – GitHub Pages Pfade sind nicht vorhersehbar
