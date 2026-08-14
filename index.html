@@ -951,6 +951,8 @@ async function initApp(user) {
     if (Object.keys(stockData).length > 0) {
       document.getElementById('filterSection').classList.add('visible');
       applyCurrentFilter();
+      // Candles im Hintergrund nachladen für Filter und Charts
+      loadCandlesInBackground();
     }
 
     // ── Phase 2: Hintergrund (kann länger dauern) ─────────────────────────────
@@ -979,12 +981,55 @@ function loadStocksInBackground() {
       await loadStocksFromFirestore();
       await loadCustomTabs();
       renderIndexTabs();
-      // Falls activeIndex ein lazy Tab ist, neu filtern
       applyCurrentFilter();
     } catch(e) {
       console.warn('loadStocksInBackground:', e.message);
     }
-  }, 500); // 500ms Verzögerung damit iOS die App erst rendern kann
+  }, 500);
+}
+
+// Lädt Candles aus dem Cache in kleinen Batches im Hintergrund
+// Nach jedem Batch wird der Filter neu angewendet
+function loadCandlesInBackground() {
+  const syms = Object.keys(stockData).filter(s => !stockData[s].candles?.length);
+  if (!syms.length) return;
+
+  const BATCH = 3; // sehr klein damit iOS nicht abstürzt
+  let i = 0;
+
+  async function loadNext() {
+    if (i >= syms.length) {
+      // Alle geladen → finaler Filter
+      applyCurrentFilter();
+      setStatus('live', `${Object.keys(stockData).length} Aktien · Candles geladen`);
+      return;
+    }
+    const chunk = syms.slice(i, i + BATCH);
+    for (const sym of chunk) {
+      try {
+        const cached = await loadFromSharedCache(sym);
+        if (cached?.candles?.length) {
+          stockData[sym] = {
+            ...stockData[sym],
+            candles:      cached.candles,
+            metrics:      cached.metrics ?? computeMetrics(cached.candles),
+            fundamentals: cached.fundamentals || stockData[sym]?.fundamentals || {},
+          };
+        }
+      } catch(e) {
+        console.warn(`loadCandlesInBackground [${sym}]:`, e.message);
+      }
+      await new Promise(r => setTimeout(r, 5));
+    }
+    i += BATCH;
+    // UI nach jedem Batch aktualisieren
+    applyCurrentFilter();
+    // Nächsten Batch mit kurzer Pause starten
+    setTimeout(loadNext, 50);
+  }
+
+  // Erst nach 1 Sekunde starten damit App erst stabil läuft
+  setTimeout(loadNext, 1000);
 }
 
 window.doLogin = async () => {
