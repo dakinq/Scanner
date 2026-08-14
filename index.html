@@ -854,6 +854,34 @@ let currentUser  = null;
 let isLoading    = false;
 let dataLoaded   = false;   // true nach erstem Firestore-Load → Button zeigt "Aktualisieren"
 let isAdmin      = false;
+
+// ── Debug-Log ─────────────────────────────────────────────────────────────────
+const debugLines = [];
+const _origLog   = console.log.bind(console);
+const _origWarn  = console.warn.bind(console);
+const _origErr   = console.error.bind(console);
+function _debugPush(prefix, args) {
+  const line = prefix + Array.from(args).map(a => {
+    if (typeof a === 'object') { try { return JSON.stringify(a); } catch(e) { return String(a); } }
+    return String(a);
+  }).join(' ');
+  debugLines.push(line);
+  if (debugLines.length > 500) debugLines.shift();
+  const el = document.getElementById('debugLogContent');
+  if (el) { el.textContent = debugLines.join('\n'); el.scrollTop = el.scrollHeight; }
+}
+console.log   = function() { _origLog(...arguments);  _debugPush('[LOG] ',  arguments); };
+console.warn  = function() { _origWarn(...arguments); _debugPush('[WARN] ', arguments); };
+console.error = function() { _origErr(...arguments);  _debugPush('[ERR] ',  arguments); };
+
+window.openDebugLog  = () => { document.getElementById('debugLogModal').style.display='block'; };
+window.closeDebugLog = () => { document.getElementById('debugLogModal').style.display='none'; };
+window.clearDebugLog = () => { debugLines.length=0; const el=document.getElementById('debugLogContent'); if(el) el.textContent='Geleert.'; };
+window.copyDebugLog  = () => { navigator.clipboard?.writeText(debugLines.join('\n')).then(()=>alert('Log kopiert!')).catch(()=>alert('Kopieren fehlgeschlagen')); };
+function updateDebugBtn() {
+  const btn = document.getElementById('debugLogBtn');
+  if (btn) btn.style.display = isAdmin ? 'block' : 'none';
+}
 let customTabs   = {}; // persönliche Reiter des Users
 
 
@@ -928,7 +956,7 @@ async function initApp(user) {
 
     // Admin prüfen
     getDoc(doc(db,'config','admins'))
-      .then(snap => { isAdmin = snap.exists() && (snap.data().uids||[]).includes(user.uid); })
+      .then(snap => { isAdmin = snap.exists() && (snap.data().uids||[]).includes(user.uid); updateDebugBtn(); })
       .catch(() => {});
 
     // Aktien-Liste AWAITEN damit Namen vor dem Laden da sind → kein "undefined"
@@ -1021,8 +1049,9 @@ async function loadStocksFromFirestore() {
       getDoc(doc(db,'config','stocks_index')),
       new Promise((_,reject) => setTimeout(()=>reject(new Error('timeout')), 5000))
     ]);
-    if (!indexSnap.exists()) return;
+    if (!indexSnap.exists()) { console.warn('loadStocksFromFirestore: stocks_index nicht gefunden'); return; }
     const sections = indexSnap.data().sections || [];
+    console.log('loadStocksFromFirestore: ' + sections.length + ' Sektionen gefunden:', sections);
     const firestoreStocks = {};
 
     for (const section of sections) {
@@ -1031,7 +1060,7 @@ async function loadStocksFromFirestore() {
           getDoc(doc(db,'config','stocks_'+section)),
           new Promise((_,reject) => setTimeout(()=>reject(new Error('timeout')), 5000))
         ]);
-        if (!snap.exists()) continue;
+        if (!snap.exists()) { console.warn('loadStocksFromFirestore [' + section + ']: Dokument nicht gefunden'); continue; }
         const data = snap.data();
 
         // Label registrieren
@@ -1042,24 +1071,41 @@ async function loadStocksFromFirestore() {
         // Mehrteilige Sektionen zusammensetzen (z.B. Russell 2000)
         if (isMultiPart) {
           let allStocks = [...(data.stocks || [])];
+          console.log('loadStocksFromFirestore [' + section + ']: mehrteilig, ' + data.totalParts + ' Parts, Part1=' + (data.stocks ? data.stocks.length : 0) + ' Eintraege');
           for (let p = 2; p <= data.totalParts; p++) {
             try {
-              const partSnap = await getDoc(doc(db,'config',`stocks_${section}_part${p}`));
-              if (partSnap.exists()) allStocks = allStocks.concat(partSnap.data().stocks || []);
-            } catch {}
+              const partSnap = await Promise.race([
+                getDoc(doc(db,'config','stocks_' + section + '_part' + p)),
+                new Promise((_,reject) => setTimeout(()=>reject(new Error('timeout')), 5000))
+              ]);
+              if (partSnap.exists()) {
+                const partCount = partSnap.data().stocks ? partSnap.data().stocks.length : 0;
+                allStocks = allStocks.concat(partSnap.data().stocks || []);
+                console.log('loadStocksFromFirestore [' + section + '] Part' + p + ': ' + partCount + ' Eintraege, Gesamt=' + allStocks.length);
+              } else {
+                console.warn('loadStocksFromFirestore [' + section + '] Part' + p + ': Dokument nicht gefunden!');
+              }
+            } catch(e) {
+              console.error('loadStocksFromFirestore [' + section + '] Part' + p + ' FEHLER:', e.message);
+            }
           }
           firestoreStocks[section] = allStocks;
+          console.log('loadStocksFromFirestore [' + section + ']: Gesamt ' + allStocks.length + ' Aktien');
         } else {
           firestoreStocks[section] = data.stocks || [];
+          console.log('loadStocksFromFirestore [' + section + ']: ' + firestoreStocks[section].length + ' Aktien');
         }
       } catch(e) {
-        console.warn(`loadStocksFromFirestore [${section}]:`, e.message);
-        // Bei Timeout: Section überspringen, App läuft weiter
+        console.warn('loadStocksFromFirestore [' + section + '] FEHLER (Sektion uebersprungen):', e.message);
       }
     }
 
+    const total = Object.values(firestoreStocks).reduce(function(sum, arr) { return sum + arr.length; }, 0);
+    console.log('loadStocksFromFirestore: Fertig. ' + Object.keys(firestoreStocks).length + ' Sektionen, ' + total + ' Aktien gesamt (inkl. Duplikate ueber Indizes)');
+
     if (Object.keys(firestoreStocks).length > 0) {
       rebuildAllStocks(firestoreStocks);
+      console.log('ALL_STOCKS nach rebuild: ' + Object.keys(ALL_STOCKS).length + ' eindeutige Symbole');
     }
   } catch(e) {
     // Kompletter Fehler: hardcodierte STOCKS bleiben aktiv
@@ -1366,19 +1412,22 @@ async function disablePush() {
 
 // ── Error Persistence ────────────────────────────────────────────────────────
 function downloadErrorCSV(errors) {
-  // Symbole mit Namen aus ALL_STOCKS anreichern
+  // Symbole mit Namen und Index aus ALL_STOCKS anreichern
   const rows = errors.map(sym => {
-    const name = ALL_STOCKS[sym]?.name ?? stockData[sym]?.name ?? '';
-    // Sonderzeichen im Namen escapen
-    const safeName = name.includes(',') ? `"${name}"` : name;
-    return `${sym},${safeName}`;
+    const info = ALL_STOCKS[sym] ?? {};
+    const name = info.name ?? stockData[sym]?.name ?? '';
+    const indices = (info.indices ?? stockData[sym]?.indices ?? []).join('; ');
+    // Sonderzeichen escapen
+    const safeName    = name.includes(',')    ? '"' + name.replace(/"/g, '""') + '"'    : name;
+    const safeIndices = indices.includes(',') ? '"' + indices.replace(/"/g, '""') + '"' : indices;
+    return sym + ',' + safeName + ',' + safeIndices;
   });
-  const csv = 'Symbol,Name\n' + rows.join('\n');
+  const csv = 'Symbol,Name,Index\n' + rows.join('\n');
   const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
   const url  = URL.createObjectURL(blob);
   const a    = document.createElement('a');
   a.href     = url;
-  a.download = `scan_fehler_${new Date().toISOString().slice(0,10)}.csv`;
+  a.download = 'scan_fehler_' + new Date().toISOString().slice(0,10) + '.csv';
   document.body.appendChild(a);
   a.click();
   document.body.removeChild(a);
@@ -3309,6 +3358,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
           <button onclick="openStockEditor();closeBurgerMenu()">Aktien bearbeiten</button>
           <button onclick="openPushSettings();closeBurgerMenu()">Push-Benachrichtigungen</button>
           <button onclick="openAlertsList();closeBurgerMenu()">Meine Alarme</button>
+          <button id="debugLogBtn" onclick="openDebugLog();closeBurgerMenu()" style="display:none">🛠 Debug-Log</button>
           <button onclick="doLogout()">Abmelden</button>
         </div>
       </div>
@@ -3548,5 +3598,20 @@ if ('serviceWorker' in navigator) {
     .catch(err => console.error('SW Registrierung fehlgeschlagen:', err));
 }
 </script>
+
+<!-- ── Debug-Log Modal (nur Admin) ────────────────────────────────────────── -->
+<div id="debugLogModal" style="display:none;position:fixed;inset:0;z-index:9999;background:rgba(0,0,0,0.85);overflow-y:auto">
+  <div style="background:#0d1117;margin:20px auto;max-width:600px;border-radius:16px;border:1px solid #30363d;padding:20px">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <div style="font-size:16px;font-weight:700;color:#e6edf3">🛠 Debug-Log</div>
+      <button onclick="closeDebugLog()" style="background:none;border:none;color:#8b949e;font-size:22px;cursor:pointer;padding:0 4px">&times;</button>
+    </div>
+    <div style="display:flex;gap:8px;margin-bottom:12px">
+      <button onclick="clearDebugLog()" style="padding:6px 14px;background:#21262d;border:1px solid #30363d;border-radius:8px;color:#8b949e;font-size:12px;cursor:pointer">Leeren</button>
+      <button onclick="copyDebugLog()" style="padding:6px 14px;background:#21262d;border:1px solid #30363d;border-radius:8px;color:#8b949e;font-size:12px;cursor:pointer">Kopieren</button>
+    </div>
+    <div id="debugLogContent" style="font-family:monospace;font-size:11px;line-height:1.6;color:#94a3b8;background:#010409;border-radius:8px;padding:12px;min-height:200px;max-height:60vh;overflow-y:auto;white-space:pre-wrap;word-break:break-all">Noch keine Logs.</div>
+  </div>
+</div>
 </body>
 </html>
