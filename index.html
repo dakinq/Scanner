@@ -996,19 +996,26 @@ window.doLogout = () => signOut(auth);
 // ── Firestore ─────────────────────────────────────────────────────────────────
 async function saveToFirestore(symbol, candles, metrics, fundamentals={}) {
   if (!currentUser) return;
-  const payload = {
+
+  const candlesStr = JSON.stringify(candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume]));
+
+  // User-Dokument: NUR Metadaten (kein Candles-String) → klein, schnell zu laden
+  const userPayload = {
     name: fundamentals?.longName || ALL_STOCKS[symbol]?.name || symbol,
     indices: ALL_STOCKS[symbol]?.indices ?? [],
     lastUpdated: Date.now(),
     metrics,
     fundamentals,
-    candles: JSON.stringify(candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume]))
+    // Kein candles-Feld hier!
   };
-  // User-spezifisch
-  await setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), payload);
-  // Geteilter Cache fuer alle User
+  await setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), userPayload);
+
+  // Candles NUR im geteilten Cache (cache/{symbol})
   try {
-    await setDoc(doc(db,'cache',symbol), payload);
+    await setDoc(doc(db,'cache',symbol), {
+      ...userPayload,
+      candles: candlesStr,
+    });
   } catch(e) {
     console.warn(`Shared cache write [${symbol}]:`, e.message);
   }
@@ -1264,20 +1271,23 @@ async function loadFromFirestore() {
     const snap = await getDocs(collection(db,'users',currentUser.uid,'stocks'));
     snap.forEach(d => {
       const raw = d.data();
+      // NUR Metadaten laden — keine Candles (die sind im cache/{symbol})
+      // candles werden on-demand beim Scan aus dem Cache geladen
       stockData[d.id] = {
-        name: raw.name, indices: raw.indices||[],
-        candles: JSON.parse(raw.candles||'[]').map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]})),
-        metrics: raw.metrics,
-        fundamentals: raw.fundamentals || {},
-        lastUpdated: raw.lastUpdated
+        name:        raw.name,
+        indices:     raw.indices || [],
+        metrics:     raw.metrics || null,
+        fundamentals:raw.fundamentals || {},
+        lastUpdated: raw.lastUpdated || 0,
+        candles:     [], // leer bis zum nächsten Scan
       };
     });
     const n = Object.keys(stockData).length;
-    if (n>0) {
-      const ts = Math.max(...snap.docs.map(d=>d.data().lastUpdated||0));
+    if (n > 0) {
+      const ts = Math.max(...snap.docs.map(d => d.data().lastUpdated||0));
       const dateStr = ts ? new Date(ts).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
       setStatus('live',`${n} Aktien${dateStr?' · '+dateStr:''}`);
-      document.getElementById('loadBtn').textContent='Aktualisieren';
+      document.getElementById('loadBtn').textContent = 'Aktualisieren';
       document.getElementById('filterSection').classList.add('visible');
       applyCurrentFilter();
     } else {
@@ -1285,8 +1295,8 @@ async function loadFromFirestore() {
     }
   } catch(e) {
     setStatus('','Firestore Fehler');
-    const em=document.getElementById('errorMsg');
-    em.textContent=`Firestore Ladefehler: ${e.code||e.message}`;
+    const em = document.getElementById('errorMsg');
+    em.textContent = `Firestore Ladefehler: ${e.code||e.message}`;
     em.classList.add('visible');
     console.error('loadFromFirestore:', e);
   }
@@ -1513,32 +1523,34 @@ async function clearErrorInFirestore(sym) {
 }
 
 // ── Delta Loading ─────────────────────────────────────────────────────────────
+const CANDLE_DAYS = 730; // 2 Jahre für saubere 200-Tage-Linie
+
 function needsBackfill(sym) {
+  // Candles sind nicht mehr beim Start im Speicher → anhand lastUpdated entscheiden
   const d = stockData[sym];
-  if (!d?.candles?.length) return false;
-  const cutoff = Math.floor(Date.now()/1000) - CANDLE_DAYS*86400;
-  return d.candles[0].time > cutoff + 7*86400; // mehr als 1 Woche Geschichte fehlt
+  if (!d?.lastUpdated) return true;
+  // Backfill wenn Daten älter als CANDLE_DAYS (noch nie vollständig geladen)
+  const ageMs = Date.now() - d.lastUpdated;
+  return ageMs > CANDLE_DAYS * 86400 * 1000;
 }
+
 function needsUpdate(sym) {
   const d = stockData[sym];
   if (!d?.lastUpdated) return true;
-  // Nur überspringen wenn Daten jünger als 30 Minuten (Schutz vor Doppelklick)
   return (Date.now()-d.lastUpdated)/60000 > 30;
 }
-const CANDLE_DAYS = 730; // 2 Jahre für saubere 200-Tage-Linie
 
 function missingDays(sym) {
   const d = stockData[sym];
-  if (!d?.candles?.length) return CANDLE_DAYS;
-  const cutoff = Math.floor(Date.now()/1000) - CANDLE_DAYS*86400;
-  const oldestStored = d.candles[0].time;
-  // Wenn älteste gespeicherte Kerze jünger als cutoff → müssen ältere Daten nachgeladen werden
-  if (oldestStored > cutoff + 7*86400) {
-    // Wie viele Tage fehlen nach hinten?
-    return Math.ceil((Date.now()/1000 - oldestStored) / 86400) + CANDLE_DAYS - Math.ceil((Date.now()/1000 - cutoff) / 86400) + 5;
+  if (!d?.lastUpdated) return CANDLE_DAYS;
+  // Candles im Speicher? Dann genau berechnen
+  if (d.candles?.length) {
+    const last = d.candles[d.candles.length-1].time;
+    return Math.ceil((Date.now()/1000 - last) / 86400) + 2;
   }
-  // Nur neue Kerzen vorne nachladen
-  return Math.ceil((Date.now()-d.candles[d.candles.length-1].time*1000)/86400000)+2;
+  // Keine Candles im Speicher → anhand lastUpdated schätzen
+  const daysSinceUpdate = Math.ceil((Date.now() - d.lastUpdated) / 86400000);
+  return Math.min(daysSinceUpdate + 5, CANDLE_DAYS);
 }
 
 function mergeCandles(existing, fresh) {
@@ -1698,28 +1710,27 @@ window.loadAllData = async () => {
   const total = toLoad.length;
 
   try {
-    // ── Schritt 1: Geteilten Cache fuer alle Symbole laden (parallel, kein Yahoo-Request) ──
-    const CACHE_BATCH = 20;
+    // ── Schritt 1: Candles aus Cache laden (sequenziell, kleine Batches) ──
+    // Candles sind nicht mehr beim Start im RAM → jetzt on-demand laden
+    const CACHE_BATCH = 5; // klein halten damit iOS nicht abstürzt
     for(let i=0; i<needsLoad.length; i+=CACHE_BATCH) {
       const chunk = needsLoad.slice(i, i+CACHE_BATCH);
-      await Promise.all(chunk.map(async sym => {
-        if (stockData[sym]?.candles?.length) return; // bereits im Speicher
+      for (const sym of chunk) {
+        if (stockData[sym]?.candles?.length) continue; // bereits geladen
         const cached = await loadFromSharedCache(sym);
-        if (cached) {
+        if (cached?.candles?.length) {
           stockData[sym] = {
-            candles:      cached.candles,
-            metrics:      cached.metrics ?? computeMetrics(cached.candles),
-            fundamentals: cached.fundamentals,
-            name:         cached.name,
-            indices:      ALL_STOCKS[sym]?.indices ?? [],
-            lastUpdated:  cached.lastUpdated,
+            ...stockData[sym], // Metadaten beibehalten
+            candles:     cached.candles,
+            metrics:     cached.metrics ?? computeMetrics(cached.candles),
+            fundamentals:cached.fundamentals || stockData[sym]?.fundamentals || {},
+            lastUpdated: cached.lastUpdated || stockData[sym]?.lastUpdated || 0,
           };
         }
-      }));
-    }
-    // Nach Cache-Load direkt anzeigen (User sieht sofort Daten)
-    const cachedCount = Object.keys(stockData).length;
-    if (cachedCount > 0) {
+        // Kurze Pause damit iOS atmen kann
+        await new Promise(r => setTimeout(r, 10));
+      }
+      // Nach jedem Batch UI aktualisieren
       applyCurrentFilter();
       document.getElementById('filterSection').classList.add('visible');
     }
