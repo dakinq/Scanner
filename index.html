@@ -1022,14 +1022,28 @@ function loadCandlesInBackground() {
       await new Promise(r => setTimeout(r, 5));
     }
     i += BATCH;
-    // UI nach jedem Batch aktualisieren
-    applyCurrentFilter();
+    // Sichtbare Charts neu zeichnen die jetzt Candles haben
+    refreshVisibleCharts();
     // Nächsten Batch mit kurzer Pause starten
     setTimeout(loadNext, 50);
   }
 
   // Erst nach 1 Sekunde starten damit App erst stabil läuft
   setTimeout(loadNext, 1000);
+}
+
+// Zeichnet Charts für sichtbare Karten neu die jetzt Candles haben
+function refreshVisibleCharts() {
+  document.querySelectorAll('.stock-card[data-sym]').forEach(card => {
+    const sym = card.dataset.sym;
+    if (!sym || !stockData[sym]?.candles?.length) return;
+    const chartEl = card.querySelector(`#chart-${sym.replace(/\./g,'_').replace(/\//g,'_')}`);
+    if (!chartEl) return;
+    // Chart noch nicht gezeichnet → jetzt zeichnen
+    if (!activeCharts[sym]) {
+      renderMiniChart(sym);
+    }
+  });
 }
 
 window.doLogin = async () => {
