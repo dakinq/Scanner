@@ -854,8 +854,7 @@ let currentUser  = null;
 let isLoading    = false;
 let isAdmin      = false;
 let customTabs   = {}; // persönliche Reiter des Users
-let lazyTabs     = {}; // Reiter die noch nicht geladen sind {sectionId: {label, totalParts}}
-const LAZY_THRESHOLD = 500; // Sektionen mit mehr als X Symbolen werden lazy geladen (SP500, Russell etc.)
+
 
 // ── Cloudflare Worker Proxy ───────────────────────────────────────────────────
 // Deploy worker.js to Cloudflare and paste your worker URL here:
@@ -924,16 +923,17 @@ onAuthStateChanged(auth, user => {
 // Initialisierung: minimal beim Start, kein automatisches Laden
 async function initApp(user) {
   try {
-    // Nur leichtgewichtige Operationen beim Start
-    setStatus('', 'Bereit');
+    setStatus('loading', 'Verbinde...');
 
-    // Admin prüfen (ein Request, schnell)
+    // Admin prüfen
     getDoc(doc(db,'config','admins'))
       .then(snap => { isAdmin = snap.exists() && (snap.data().uids||[]).includes(user.uid); })
       .catch(() => {});
 
-    // Aktien-Liste (nur Namen/Sektionen, keine Candles) im Hintergrund
-    loadStocksInBackground();
+    // Aktien-Liste AWAITEN damit Namen vor dem Laden da sind → kein "undefined"
+    await loadStocksFromFirestore();
+    await loadCustomTabs();
+    renderIndexTabs();
 
     // Leichtgewichtige User-Einstellungen
     loadFilterFavorites();
@@ -942,7 +942,7 @@ async function initApp(user) {
     loadErrorsFromFirestore().catch(()=>{});
     seLoadCustomFromFirestore().catch(()=>{});
 
-    // Button Text anpassen
+    setStatus('', 'Bereit');
     document.getElementById('loadBtn').textContent = 'Daten laden';
 
   } catch(e) {
@@ -951,19 +951,7 @@ async function initApp(user) {
   }
 }
 
-// Lädt Aktien-Liste und Custom-Tabs komplett im Hintergrund
-function loadStocksInBackground() {
-  setTimeout(async () => {
-    try {
-      await loadStocksFromFirestore();
-      await loadCustomTabs();
-      renderIndexTabs();
-      applyCurrentFilter();
-    } catch(e) {
-      console.warn('loadStocksInBackground:', e.message);
-    }
-  }, 500);
-}
+
 
 // Lädt Candles aus dem Cache in kleinen Batches im Hintergrund
 // Nach jedem Batch wird der Filter neu angewendet
@@ -1048,22 +1036,21 @@ async function loadStocksFromFirestore() {
         // Label registrieren
         if (data.label) INDEX_LABELS[section] = data.label;
 
-        const stockCount = (data.stocks||[]).length;
         const isMultiPart = data.totalParts && data.totalParts > 1;
 
-        // Grosse Sektionen (>LAZY_THRESHOLD) oder mehrteilige → lazy
-        if (stockCount > LAZY_THRESHOLD || isMultiPart) {
-          lazyTabs[section] = {
-            label:      data.label || section,
-            totalParts: data.totalParts || 1,
-            count:      stockCount,
-            loaded:     false,
-          };
-          INDEX_LABELS[section] = data.label || section;
-          continue;
+        // Mehrteilige Sektionen zusammensetzen (z.B. Russell 2000)
+        if (isMultiPart) {
+          let allStocks = [...(data.stocks || [])];
+          for (let p = 2; p <= data.totalParts; p++) {
+            try {
+              const partSnap = await getDoc(doc(db,'config',`stocks_${section}_part${p}`));
+              if (partSnap.exists()) allStocks = allStocks.concat(partSnap.data().stocks || []);
+            } catch {}
+          }
+          firestoreStocks[section] = allStocks;
+        } else {
+          firestoreStocks[section] = data.stocks || [];
         }
-
-        firestoreStocks[section] = data.stocks || [];
       } catch(e) {
         console.warn(`loadStocksFromFirestore [${section}]:`, e.message);
         // Bei Timeout: Section überspringen, App läuft weiter
@@ -1079,38 +1066,7 @@ async function loadStocksFromFirestore() {
   }
 }
 
-// Lädt eine lazy Sektion bei Bedarf (wenn User den Tab antippt)
-async function loadLazyTab(section) {
-  if (!lazyTabs[section] || lazyTabs[section].loaded) return;
-  setStatus('loading', `Lade ${INDEX_LABELS[section] || section}...`);
-  try {
-    const snap = await getDoc(doc(db,'config','stocks_'+section));
-    if (!snap.exists()) return;
-    const data = snap.data();
-    let stocks = [...(data.stocks || [])];
 
-    // Mehrteilige Reiter zusammensetzen
-    if (data.totalParts && data.totalParts > 1) {
-      for (let i = 2; i <= data.totalParts; i++) {
-        try {
-          const partSnap = await getDoc(doc(db,'config',`stocks_${section}_part${i}`));
-          if (partSnap.exists()) stocks = stocks.concat(partSnap.data().stocks || []);
-        } catch {}
-      }
-    }
-
-    // In ALL_STOCKS einbauen
-    stocks.forEach(({s, n}) => {
-      if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [], tv: defaultTvSymbol(s) };
-      if (!ALL_STOCKS[s].indices.includes(section)) ALL_STOCKS[s].indices.push(section);
-    });
-
-    lazyTabs[section].loaded = true;
-    console.log(`Lazy tab geladen: ${section} (${stocks.length} Symbole)`);
-  } catch(e) {
-    console.warn(`loadLazyTab [${section}]:`, e.message);
-  }
-}
 
 // ── Custom-Tabs laden & speichern ────────────────────────────────────────────
 async function loadCustomTabs() {
@@ -1169,14 +1125,7 @@ function renderIndexTabs() {
     html += `<div class="idx-chip ${active}" onclick="setIndex('${idx}',this)">${label}</div>`;
   });
 
-  // Lazy Tabs (grosse Sektionen die noch nicht geladen sind)
-  Object.entries(lazyTabs).forEach(([section, meta]) => {
-    if (customTabs[section]) return; // Custom-Tab übernimmt
-    const label = INDEX_LABELS[section] || meta.label || section;
-    const active = activeIndex===section ? 'active' : '';
-    const loadedMark = meta.loaded ? '' : ' 🔄';
-    html += `<div class="idx-chip ${active}" onclick="setIndex('${section}',this)">${label}${loadedMark}</div>`;
-  });
+
 
   // Custom-Tabs
   Object.entries(customTabs).forEach(([tabId, tab]) => {
@@ -1638,12 +1587,6 @@ window.loadAllData = async () => {
   document.getElementById('errorMsg').classList.remove('visible');
   showProgress(true);
 
-  // Lazy Tab zuerst laden falls noch nicht geschehen
-  if (activeIndex !== 'ALL' && lazyTabs[activeIndex] && !lazyTabs[activeIndex].loaded) {
-    await loadLazyTab(activeIndex);
-    renderIndexTabs();
-  }
-
   const allSections = [...new Set(Object.values(ALL_STOCKS).flatMap(s=>s.indices))];
   // "Alle" → nur bereits geladene Sektionen (was im RAM ist + lazy tabs die geladen wurden)
   // Aktiver Reiter → nur dieser Reiter
@@ -1756,12 +1699,6 @@ window.setIndex = async (idx,el) => {
   activeIndex=idx;
   document.querySelectorAll('.idx-chip').forEach(c=>c.classList.remove('active'));
   el.classList.add('active');
-
-  // Lazy Tab bei Bedarf laden
-  if (lazyTabs[idx] && !lazyTabs[idx].loaded) {
-    await loadLazyTab(idx);
-    renderIndexTabs(); // 🔄 entfernen nach dem Laden
-  }
 
   applyCurrentFilter();
 };
