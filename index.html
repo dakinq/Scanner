@@ -2831,8 +2831,12 @@ document.addEventListener('click', () => {
 });
 
 // ── Stock Editor ──────────────────────────────────────────────────────────────
-const SE_INDICES = ['DAX','EUROSTOXX','SMI','FTSE100','NASDAQ100','SP500','NIKKEI225','HANGSENG','INDICES','COMMODITIES'];
-const SE_LABELS  = {DAX:'DAX',EUROSTOXX:'EuroStoxx',SMI:'SMI',FTSE100:'FTSE 100',NASDAQ100:'NASDAQ 100',SP500:'S&P 500',NIKKEI225:'Nikkei 225',HANGSENG:'Hang Seng',INDICES:'Indizes',COMMODITIES:'Rohstoffe'};
+// SE_INDICES wird dynamisch aus ALL_STOCKS + INDEX_LABELS gebaut (kein Hardcoding)
+function getSeIndices() {
+  const fromStocks = [...new Set(Object.values(ALL_STOCKS).flatMap(s => s.indices||[]))];
+  // Custom-Tabs ausschließen (nur bekannte Index-Schlüssel)
+  return fromStocks.filter(idx => !customTabs[idx]);
+}
 let seActiveIndex = 'DAX';
 let seErrorFilter = false;
 let seLastErrors  = [];
@@ -2922,10 +2926,14 @@ window.closeStockEditor = (e) => {
 function seBuildTabs() {
   const el = document.getElementById('seTabs');
   el.innerHTML = '';
-  SE_INDICES.forEach(idx => {
+  const indices = getSeIndices();
+  // seActiveIndex zurücksetzen falls er nicht mehr existiert
+  if (!indices.includes(seActiveIndex)) seActiveIndex = indices[0] || 'DAX';
+  indices.forEach(idx => {
+    const label = INDEX_LABELS[idx] || idx;
     const t = document.createElement('div');
     t.className = 'se-tab' + (idx===seActiveIndex?' active':'');
-    t.textContent = SE_LABELS[idx];
+    t.textContent = label;
     t.onclick = () => { seActiveIndex=idx; seBuildTabs(); seRenderList(); };
     el.appendChild(t);
   });
@@ -2934,7 +2942,11 @@ function seBuildTabs() {
 function seRenderList() {
   const el = document.getElementById('seList');
   el.innerHTML = '';
-  let stocks = [...(STOCKS[seActiveIndex]||[])];
+  // Alle Symbole aus ALL_STOCKS die zum aktiven Reiter gehören
+  let stocks = Object.entries(ALL_STOCKS)
+    .filter(([sym, info]) => (info.indices||[]).includes(seActiveIndex))
+    .map(([sym, info]) => ({s: sym, n: info.name || sym}))
+    .sort((a,b) => a.n.localeCompare(b.n, undefined, {sensitivity:'base'}));
   if (seErrorFilter) stocks = stocks.filter(({s}) => seLastErrors.includes(s));
   if (!stocks.length) {
     el.innerHTML = `<div style="padding:24px 0;text-align:center;color:var(--muted);font-size:13px">${seErrorFilter?'Keine Fehler in diesem Index':'Keine Aktien'}</div>`;
@@ -2997,9 +3009,10 @@ window.seConfirmAdd = async () => {
   const sym  = document.getElementById('seNewSym').value.trim().toUpperCase();
   if (!name || !sym) return;
   const idx = seActiveIndex;
-  if (STOCKS[idx].some(e=>e.s===sym)) { alert('Dieses Kürzel existiert bereits in diesem Index.'); return; }
-  STOCKS[idx].push({s:sym,n:name});
+  const alreadyExists = ALL_STOCKS[sym] && (ALL_STOCKS[sym].indices||[]).includes(idx);
+  if (alreadyExists) { alert('Dieses Kürzel existiert bereits in diesem Index.'); return; }
   if (!ALL_STOCKS[sym]) ALL_STOCKS[sym]={name,indices:[]};
+  ALL_STOCKS[sym].name = name;
   if (!ALL_STOCKS[sym].indices.includes(idx)) ALL_STOCKS[sym].indices.push(idx);
   seHideAddForm();
   seRenderList();
@@ -3027,13 +3040,16 @@ window.seConfirmEdit = async () => {
   const newSym  = document.getElementById('seEditSym').value.trim().toUpperCase();
   if (!newName || !newSym) return;
   const {idx, origSym} = seEditTarget;
-  const entry = STOCKS[idx].find(e=>e.s===origSym);
-  if (entry) { entry.s=newSym; entry.n=newName; }
+  // ALL_STOCKS aktualisieren (Ticker umbenennen oder nur Name ändern)
   if (ALL_STOCKS[origSym]) {
     const inds = ALL_STOCKS[origSym].indices;
-    delete ALL_STOCKS[origSym];
-    if (!ALL_STOCKS[newSym]) ALL_STOCKS[newSym]={name:newName,indices:inds};
-    else ALL_STOCKS[newSym].name=newName;
+    if (origSym !== newSym) {
+      delete ALL_STOCKS[origSym];
+      if (!ALL_STOCKS[newSym]) ALL_STOCKS[newSym] = {name:newName, indices:inds};
+      else { ALL_STOCKS[newSym].name = newName; inds.forEach(i => { if(!ALL_STOCKS[newSym].indices.includes(i)) ALL_STOCKS[newSym].indices.push(i); }); }
+    } else {
+      ALL_STOCKS[origSym].name = newName;
+    }
   }
   // Alten Ticker sofort aus Fehlerliste entfernen – er kann nie mehr Daten bekommen
   if (seLastErrors.includes(origSym)) {
@@ -3049,9 +3065,8 @@ window.seConfirmEdit = async () => {
 window.seDeleteStock = async () => {
   if (!seEditTarget) return;
   const {idx, origSym} = seEditTarget;
-  STOCKS[idx] = STOCKS[idx].filter(e=>e.s!==origSym);
   if (ALL_STOCKS[origSym]) {
-    ALL_STOCKS[origSym].indices = ALL_STOCKS[origSym].indices.filter(i=>i!==idx);
+    ALL_STOCKS[origSym].indices = (ALL_STOCKS[origSym].indices||[]).filter(i => i !== idx);
     if (!ALL_STOCKS[origSym].indices.length) delete ALL_STOCKS[origSym];
   }
   // Gelöschten Ticker sofort aus Fehlerliste entfernen
