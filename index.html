@@ -838,8 +838,22 @@ function rebuildAllStocks(stocks) {
   });
 }
 
+// Async Version für grosse Listen (wird in loadStocksFromFirestore genutzt)
+async function rebuildAllStocksAsync(stocks) {
+  ALL_STOCKS = {};
+  for (const [idx, list] of Object.entries(stocks)) {
+    list.forEach(({s,n,tv}) => {
+      if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [], tv: tv || defaultTvSymbol(s) };
+      else if (tv) ALL_STOCKS[s].tv = tv;
+      if (!ALL_STOCKS[s].indices.includes(idx)) ALL_STOCKS[s].indices.push(idx);
+    });
+    // Kurze Pause damit iOS nicht abstürzt
+    await new Promise(r => setTimeout(r, 0));
+  }
+}
+
 // Initiale Befüllung aus hardcodierten STOCKS (Fallback falls Firestore leer)
-rebuildAllStocks(STOCKS);
+rebuildAllStocks(STOCKS); // synchron beim Start, async nur in loadStocksFromFirestore
 
 // ── State ────────────────────────────────────────────────────────────────────
 let stockData    = {};
@@ -852,6 +866,8 @@ let currentUser  = null;
 let isLoading    = false;
 let isAdmin      = false;
 let customTabs   = {}; // persönliche Reiter des Users
+let lazyTabs     = {}; // Reiter die noch nicht geladen sind {sectionId: {label, totalParts}}
+const LAZY_THRESHOLD = 300; // Sektionen mit mehr als X Symbolen werden lazy geladen
 
 // ── Cloudflare Worker Proxy ───────────────────────────────────────────────────
 // Deploy worker.js to Cloudflare and paste your worker URL here:
@@ -929,7 +945,11 @@ async function initApp(user) {
     // 2. Aktien-Liste aus Firestore (kann lange dauern bei Russell 2000)
     //    Läuft komplett im Hintergrund, App ist bereits nutzbar
     setStatus('loading', 'Lade Aktien-Liste...');
-    await loadStocksFromFirestore();
+    // Harter Timeout: wenn Firestore nach 8s nicht antwortet → hardcodierte Liste nutzen
+    await Promise.race([
+      loadStocksFromFirestore(),
+      new Promise(resolve => setTimeout(resolve, 8000))
+    ]);
 
     // 3. Custom-Tabs laden
     await loadCustomTabs();
@@ -1005,48 +1025,90 @@ async function loadFromSharedCache(symbol) {
   }
 }
 
-// ── Aktien-Liste aus Firestore laden ────────────────────────────────────────
+// ── Aktien-Liste aus Firestore laden (mit Lazy Loading für grosse Sektionen) ─
 async function loadStocksFromFirestore() {
   try {
-    const indexSnap = await getDoc(doc(db,'config','stocks_index'));
-    if (!indexSnap.exists()) return; // Noch nicht initialisiert → hardcodierte STOCKS bleiben
+    const indexSnap = await Promise.race([
+      getDoc(doc(db,'config','stocks_index')),
+      new Promise((_,reject) => setTimeout(()=>reject(new Error('timeout')), 5000))
+    ]);
+    if (!indexSnap.exists()) return;
     const sections = indexSnap.data().sections || [];
     const firestoreStocks = {};
 
-    // Sequenziell laden statt parallel - verhindert Überlastung
     for (const section of sections) {
       try {
-        const snap = await getDoc(doc(db,'config','stocks_'+section));
+        const snap = await Promise.race([
+          getDoc(doc(db,'config','stocks_'+section)),
+          new Promise((_,reject) => setTimeout(()=>reject(new Error('timeout')), 5000))
+        ]);
         if (!snap.exists()) continue;
         const data = snap.data();
 
-        // Label für INDEX_LABELS registrieren falls vorhanden
+        // Label registrieren
         if (data.label) INDEX_LABELS[section] = data.label;
 
-        // Mehrteilige Reiter zusammensetzen (z.B. Russell 2000)
-        if (data.totalParts && data.totalParts > 1) {
-          let allStocks = [...(data.stocks || [])];
-          for (let i = 2; i <= data.totalParts; i++) {
-            try {
-              const partSnap = await getDoc(doc(db,'config',`stocks_${section}_part${i}`));
-              if (partSnap.exists()) allStocks = allStocks.concat(partSnap.data().stocks || []);
-            } catch {}
-          }
-          firestoreStocks[section] = allStocks;
-        } else {
-          firestoreStocks[section] = data.stocks || [];
+        const stockCount = (data.stocks||[]).length;
+        const isMultiPart = data.totalParts && data.totalParts > 1;
+
+        // Grosse Sektionen (>LAZY_THRESHOLD) oder mehrteilige → lazy
+        if (stockCount > LAZY_THRESHOLD || isMultiPart) {
+          lazyTabs[section] = {
+            label:      data.label || section,
+            totalParts: data.totalParts || 1,
+            count:      stockCount,
+            loaded:     false,
+          };
+          INDEX_LABELS[section] = data.label || section;
+          continue;
         }
+
+        firestoreStocks[section] = data.stocks || [];
       } catch(e) {
         console.warn(`loadStocksFromFirestore [${section}]:`, e.message);
+        // Bei Timeout: Section überspringen, App läuft weiter
       }
     }
 
     if (Object.keys(firestoreStocks).length > 0) {
-      rebuildAllStocks(firestoreStocks);
-      console.log('Aktien-Liste aus Firestore geladen:', Object.keys(firestoreStocks));
+      await rebuildAllStocksAsync(firestoreStocks);
     }
   } catch(e) {
-    console.warn('loadStocksFromFirestore:', e.message);
+    // Kompletter Fehler: hardcodierte STOCKS bleiben aktiv
+    console.warn('loadStocksFromFirestore fehlgeschlagen, nutze hardcodierte Liste:', e.message);
+  }
+}
+
+// Lädt eine lazy Sektion bei Bedarf (wenn User den Tab antippt)
+async function loadLazyTab(section) {
+  if (!lazyTabs[section] || lazyTabs[section].loaded) return;
+  setStatus('loading', `Lade ${INDEX_LABELS[section] || section}...`);
+  try {
+    const snap = await getDoc(doc(db,'config','stocks_'+section));
+    if (!snap.exists()) return;
+    const data = snap.data();
+    let stocks = [...(data.stocks || [])];
+
+    // Mehrteilige Reiter zusammensetzen
+    if (data.totalParts && data.totalParts > 1) {
+      for (let i = 2; i <= data.totalParts; i++) {
+        try {
+          const partSnap = await getDoc(doc(db,'config',`stocks_${section}_part${i}`));
+          if (partSnap.exists()) stocks = stocks.concat(partSnap.data().stocks || []);
+        } catch {}
+      }
+    }
+
+    // In ALL_STOCKS einbauen
+    stocks.forEach(({s, n}) => {
+      if (!ALL_STOCKS[s]) ALL_STOCKS[s] = { name: n, indices: [], tv: defaultTvSymbol(s) };
+      if (!ALL_STOCKS[s].indices.includes(section)) ALL_STOCKS[s].indices.push(section);
+    });
+
+    lazyTabs[section].loaded = true;
+    console.log(`Lazy tab geladen: ${section} (${stocks.length} Symbole)`);
+  } catch(e) {
+    console.warn(`loadLazyTab [${section}]:`, e.message);
   }
 }
 
@@ -1105,6 +1167,15 @@ function renderIndexTabs() {
     const label = INDEX_LABELS[idx] || idx;
     const active = activeIndex===idx ? 'active' : '';
     html += `<div class="idx-chip ${active}" onclick="setIndex('${idx}',this)">${label}</div>`;
+  });
+
+  // Lazy Tabs (grosse Sektionen die noch nicht geladen sind)
+  Object.entries(lazyTabs).forEach(([section, meta]) => {
+    if (customTabs[section]) return; // Custom-Tab übernimmt
+    const label = INDEX_LABELS[section] || meta.label || section;
+    const active = activeIndex===section ? 'active' : '';
+    const loadedMark = meta.loaded ? '' : ' 🔄';
+    html += `<div class="idx-chip ${active}" onclick="setIndex('${section}',this)">${label}${loadedMark}</div>`;
   });
 
   // Custom-Tabs
@@ -1701,10 +1772,17 @@ window.loadAllData = async () => {
 };
 
 // ── Filter ────────────────────────────────────────────────────────────────────
-window.setIndex = (idx,el) => {
+window.setIndex = async (idx,el) => {
   activeIndex=idx;
   document.querySelectorAll('.idx-chip').forEach(c=>c.classList.remove('active'));
   el.classList.add('active');
+
+  // Lazy Tab bei Bedarf laden
+  if (lazyTabs[idx] && !lazyTabs[idx].loaded) {
+    await loadLazyTab(idx);
+    renderIndexTabs(); // 🔄 entfernen nach dem Laden
+  }
+
   applyCurrentFilter();
 };
 // ── Filter Favorites ──────────────────────────────────────────────────────────
