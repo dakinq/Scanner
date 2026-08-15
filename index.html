@@ -2406,10 +2406,29 @@ function evalExpr(expr, m, candles) {
 function applyCurrentFilter() {
   let syms=Object.keys(stockData);
   if(activeIndex!=='ALL') syms=syms.filter(s=>(stockData[s].indices||[]).includes(activeIndex)||(ALL_STOCKS[s]?.indices||[]).includes(activeIndex));
+
+  // Diagnose: Aktien ohne gueltige Metriken loggen
+  const noMetrics = syms.filter(sym => {
+    const m = stockData[sym]?.metrics;
+    if (!m) return true;
+    if (typeof m.close !== 'number' || isNaN(m.close)) return true;
+    return false;
+  });
+  if (noMetrics.length > 0) {
+    console.warn('Aktien ohne gueltige Metriken (' + noMetrics.length + '):');
+    noMetrics.slice(0, 30).forEach(sym => {
+      const d = stockData[sym];
+      const cc = d?.candles?.length ?? 0;
+      const lc = d?.candles?.[cc-1];
+      console.warn('  [' + sym + '] candles=' + cc + ' lastClose=' + (lc?.close ?? 'n/a') + ' metrics.close=' + (d?.metrics?.close ?? 'n/a'));
+    });
+    if (noMetrics.length > 30) console.warn('  ... und ' + (noMetrics.length - 30) + ' weitere');
+  }
+
   syms=syms.filter(sym=>{
     const m=stockData[sym].metrics;
     const candles=stockData[sym].candles||[];
-    if(!m) return false;
+    if(!m || typeof m.close !== 'number' || isNaN(m.close)) return false;
     if(activeFilters.size === 0) return true;
     // Alle aktiven Filter müssen erfüllt sein (UND)
     const activeExprs = filterFavorites
