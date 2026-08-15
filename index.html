@@ -1719,11 +1719,10 @@ async function loadFromFirestoreCache() {
           };
         }
       }));
-      // Nach jedem Batch direkt anzeigen
-      if (Object.keys(stockData).length > 0) {
-        applyCurrentFilter();
-        document.getElementById('filterSection').classList.add('visible');
-      }
+      // Nur Zähler aktualisieren – KEIN renderCards während dem Laden (verhindert Blinken + Memory-Leak)
+      document.getElementById('resultCount').textContent = Object.keys(stockData).length;
+      document.getElementById('summaryBar').classList.add('visible');
+      document.getElementById('filterSection').classList.add('visible');
     }
   } catch(fatalErr) {
     console.error('loadFromFirestoreCache fatal error:', fatalErr);
@@ -1740,7 +1739,7 @@ async function loadFromFirestoreCache() {
     setStatus('live',`${n} Aktien${dateStr?' · '+dateStr:''}`);
     dataLoaded = true;
     document.getElementById('loadBtn').textContent = 'Aktualisieren';
-    document.getElementById('filterSection').classList.add('visible');
+    // Erst JETZT einmal rendern – nach vollständigem Load
     applyCurrentFilter();
   }
 }
@@ -2428,10 +2427,11 @@ let currentPage = 0;
 
 function renderCards() {
   currentPage = 0;
-  // Destroy all existing charts
+  // Charts zerstören und Observer-Beobachtungen zurücksetzen
   Object.values(activeCharts).forEach(c=>{try{c.remove()}catch(e){}});
   activeCharts={};
-  if(chartObserver){ chartObserver.disconnect(); chartObserver=null; }
+  // chartObserver wiederverwenden (nicht auf null setzen → verhindert Memory-Leak durch Neuerstellung)
+  if(chartObserver){ chartObserver.disconnect(); }
   if(scrollObserver){ scrollObserver.disconnect(); scrollObserver=null; }
 
   document.getElementById('resultCount').textContent=filteredSyms.length;
@@ -2497,7 +2497,7 @@ function appendCards() {
   grid.appendChild(frag);
   currentPage++;
 
-  // Chart observer: render chart only when card is visible, destroy when not
+  // Chart observer: einmal erstellen, neue Elemente einhängen
   if(!chartObserver){
     chartObserver = new IntersectionObserver((entries)=>{
       entries.forEach(entry=>{
@@ -2515,9 +2515,12 @@ function appendCards() {
       });
     },{rootMargin:'200px 0px', threshold:0});
   }
+  // Nur die neu hinzugefügten Karten beobachten (nicht alle neu)
   requestAnimationFrame(()=>{
-    grid.querySelectorAll('.chart-wrap[data-sym]').forEach(el=>{
-      chartObserver.observe(el);
+    frag.childNodes && slice.forEach(sym => {
+      const safeId = sym.replace(/\./g,'_').replace(/\//g,'_');
+      const el = document.getElementById('chart-' + safeId);
+      if(el) chartObserver.observe(el);
     });
   });
 
