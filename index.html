@@ -995,13 +995,15 @@ window.doLogout = () => signOut(auth);
 // ── Firestore ─────────────────────────────────────────────────────────────────
 // Write-Queue: verhindert resource-exhausted bei vielen parallelen Saves
 const _fsQueue = [];
-let   _fsRunning = false;
+const FS_WORKERS = 5;   // parallele Firestore-Writer
+let   _fsActiveWorkers = 0;
 
-async function _fsFlush() {
-  if (_fsRunning) return;
-  _fsRunning = true;
+async function _fsWorker() {
+  _fsActiveWorkers++;
   while (_fsQueue.length > 0) {
-    const { symbol, candles, metrics, fundamentals, resolve, reject } = _fsQueue.shift();
+    const job = _fsQueue.shift();
+    if (!job) break;
+    const { symbol, candles, metrics, fundamentals, resolve, reject } = job;
     let retries = 0;
     while (retries < 3) {
       try {
@@ -1009,21 +1011,25 @@ async function _fsFlush() {
         resolve();
         break;
       } catch(e) {
-        if (e.code === 'resource-exhausted' && retries < 2) {
-          // Bei Überlastung länger warten und nochmal versuchen
+        if ((e.code === 'resource-exhausted' || e.code === 'unavailable') && retries < 2) {
           retries++;
-          console.warn('Firestore resource-exhausted [' + symbol + '], Retry ' + retries + '/3 in ' + (retries * 2000) + 'ms');
-          await new Promise(r => setTimeout(r, retries * 2000));
+          console.warn('Firestore exhausted [' + symbol + '], Retry ' + retries + ' in ' + (retries * 500) + 'ms');
+          await new Promise(r => setTimeout(r, retries * 500));
         } else {
           reject(e);
           break;
         }
       }
     }
-    // 400ms Pause zwischen Writes – verhindert Write-Stream-Überlastung
-    if (_fsQueue.length > 0) await new Promise(r => setTimeout(r, 400));
   }
-  _fsRunning = false;
+  _fsActiveWorkers--;
+}
+
+function _fsFlush() {
+  // Fehlende Worker hochfahren bis Maximum
+  while (_fsActiveWorkers < FS_WORKERS && _fsQueue.length > 0) {
+    _fsWorker();
+  }
 }
 
 async function saveToFirestore(symbol, candles, metrics, fundamentals={}) {
@@ -1808,17 +1814,17 @@ async function refreshFromYahoo() {
     console.error('refreshFromYahoo fatal error:', fatalErr);
   }
 
-  // Warten bis alle Firestore-Writes durch die Queue abgearbeitet sind
-  if (_fsQueue.length > 0 || _fsRunning) {
-    const totalWrites = _fsQueue.length;
+  // Warten bis alle Firestore-Writes durch die Worker abgearbeitet sind
+  if (_fsQueue.length > 0 || _fsActiveWorkers > 0) {
+    const totalWrites = _fsQueue.length + _fsActiveWorkers;
     await new Promise(resolve => {
       const check = setInterval(() => {
-        const remaining = _fsQueue.length + (_fsRunning ? 1 : 0);
-        const done = totalWrites - remaining + 1;
+        const remaining = _fsQueue.length + _fsActiveWorkers;
+        const done = Math.max(0, totalWrites - remaining);
         if (totalWrites > 0) {
           updateProgress(done, totalWrites, `Speichere ${done} von ${totalWrites} in Firestore...`);
         }
-        if (_fsQueue.length === 0 && !_fsRunning) {
+        if (_fsQueue.length === 0 && _fsActiveWorkers === 0) {
           clearInterval(check);
           resolve();
         }
@@ -1854,8 +1860,14 @@ window.setIndex = async (idx,el) => {
   activeIndex=idx;
   document.querySelectorAll('.idx-chip').forEach(c=>c.classList.remove('active'));
   el.classList.add('active');
-
   applyCurrentFilter();
+  // Status-Zahl oben immer auf Gesamt-stockData aktualisieren
+  if (dataLoaded) {
+    const n = Object.keys(stockData).length;
+    const latestTs = Math.max(...Object.values(stockData).map(d=>d.lastUpdated||0));
+    const dateStr = latestTs ? new Date(latestTs).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
+    setStatus('live', n + ' Aktien' + (dateStr ? ' · ' + dateStr : ''));
+  }
 };
 // ── Filter Favorites ──────────────────────────────────────────────────────────
 let filterFavorites = []; // [{id, name, expr}]
