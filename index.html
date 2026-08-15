@@ -995,7 +995,7 @@ window.doLogout = () => signOut(auth);
 // ── Firestore ─────────────────────────────────────────────────────────────────
 // Write-Queue: verhindert resource-exhausted bei vielen parallelen Saves
 const _fsQueue = [];
-const FS_WORKERS = 5;   // parallele Firestore-Writer
+const FS_WORKERS = 10;
 let   _fsActiveWorkers = 0;
 
 async function _fsWorker() {
@@ -1026,7 +1026,6 @@ async function _fsWorker() {
 }
 
 function _fsFlush() {
-  // Fehlende Worker hochfahren bis Maximum
   while (_fsActiveWorkers < FS_WORKERS && _fsQueue.length > 0) {
     _fsWorker();
   }
@@ -1798,7 +1797,12 @@ async function refreshFromYahoo() {
             indices: info.indices,
             lastUpdated: Date.now()
           };
-          // Save wird in die gedrosselte Queue eingereiht (kein fire-and-forget)
+          // Status sofort aktualisieren – vor Firestore-Save
+          const _n = Object.keys(stockData).length;
+          const _ts = stockData[sym].lastUpdated;
+          const _d = new Date(_ts).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
+          setStatus('live', _n + ' Aktien · ' + _d);
+          // Firestore-Save in parallele Worker-Queue
           saveToFirestore(sym, candles, metrics, mergedFund).catch(e=>{
             console.error('Firestore save failed [' + sym + ']:', e.code||e.message);
             errors.push(sym + '(DB)');
@@ -1814,7 +1818,7 @@ async function refreshFromYahoo() {
     console.error('refreshFromYahoo fatal error:', fatalErr);
   }
 
-  // Warten bis alle Firestore-Writes durch die Worker abgearbeitet sind
+  // Warten bis alle Firestore-Worker fertig sind
   if (_fsQueue.length > 0 || _fsActiveWorkers > 0) {
     const totalWrites = _fsQueue.length + _fsActiveWorkers;
     await new Promise(resolve => {
@@ -1822,7 +1826,7 @@ async function refreshFromYahoo() {
         const remaining = _fsQueue.length + _fsActiveWorkers;
         const done = Math.max(0, totalWrites - remaining);
         if (totalWrites > 0) {
-          updateProgress(done, totalWrites, `Speichere ${done} von ${totalWrites} in Firestore...`);
+          updateProgress(done, totalWrites, 'Speichere ' + done + ' von ' + totalWrites + ' in Firestore...');
         }
         if (_fsQueue.length === 0 && _fsActiveWorkers === 0) {
           clearInterval(check);
@@ -1860,14 +1864,8 @@ window.setIndex = async (idx,el) => {
   activeIndex=idx;
   document.querySelectorAll('.idx-chip').forEach(c=>c.classList.remove('active'));
   el.classList.add('active');
+
   applyCurrentFilter();
-  // Status-Zahl oben immer auf Gesamt-stockData aktualisieren
-  if (dataLoaded) {
-    const n = Object.keys(stockData).length;
-    const latestTs = Math.max(...Object.values(stockData).map(d=>d.lastUpdated||0));
-    const dateStr = latestTs ? new Date(latestTs).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-    setStatus('live', n + ' Aktien' + (dateStr ? ' · ' + dateStr : ''));
-  }
 };
 // ── Filter Favorites ──────────────────────────────────────────────────────────
 let filterFavorites = []; // [{id, name, expr}]
