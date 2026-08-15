@@ -1736,11 +1736,13 @@ async function loadFromFirestoreCache() {
   if(n>0) {
     const latestTs = Math.max(...Object.values(stockData).map(d=>d.lastUpdated||0));
     const dateStr = latestTs ? new Date(latestTs).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-    setStatus('live',`${n} Aktien${dateStr?' · '+dateStr:''}`);
+    // applyCurrentFilter() setzt resultCount – erst danach setStatus damit oben und unten übereinstimmen
     dataLoaded = true;
     document.getElementById('loadBtn').textContent = 'Aktualisieren';
-    // Erst JETZT einmal rendern – nach vollständigem Load
     applyCurrentFilter();
+    // Status NACH dem Render setzen → zeigt echte Anzahl aus stockData
+    const nFinal = Object.keys(stockData).length;
+    setStatus('live',`${nFinal} Aktien${dateStr?' · '+dateStr:''}`);
   }
 }
 
@@ -1808,9 +1810,14 @@ async function refreshFromYahoo() {
 
   // Warten bis alle Firestore-Writes durch die Queue abgearbeitet sind
   if (_fsQueue.length > 0 || _fsRunning) {
-    updateProgress(0, 1, 'Speichere in Firestore...');
+    const totalWrites = _fsQueue.length;
     await new Promise(resolve => {
       const check = setInterval(() => {
+        const remaining = _fsQueue.length + (_fsRunning ? 1 : 0);
+        const done = totalWrites - remaining + 1;
+        if (totalWrites > 0) {
+          updateProgress(done, totalWrites, `Speichere ${done} von ${totalWrites} in Firestore...`);
+        }
         if (_fsQueue.length === 0 && !_fsRunning) {
           clearInterval(check);
           resolve();
@@ -1834,9 +1841,11 @@ async function refreshFromYahoo() {
   if(n>0) {
     const latestTs = Math.max(...Object.values(stockData).map(d=>d.lastUpdated||0));
     const dateStr = latestTs ? new Date(latestTs).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'}) : '';
-    setStatus('live',`${n} Aktien${dateStr?' · '+dateStr:''}`);
     document.getElementById('filterSection').classList.add('visible');
     applyCurrentFilter();
+    // Status NACH dem Render → zeigt echte Anzahl
+    const nFinal = Object.keys(stockData).length;
+    setStatus('live',`${nFinal} Aktien${dateStr?' · '+dateStr:''}`);
   }
 }
 
