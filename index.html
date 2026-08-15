@@ -1002,14 +1002,26 @@ async function _fsFlush() {
   _fsRunning = true;
   while (_fsQueue.length > 0) {
     const { symbol, candles, metrics, fundamentals, resolve, reject } = _fsQueue.shift();
-    try {
-      await _doSaveToFirestore(symbol, candles, metrics, fundamentals);
-      resolve();
-    } catch(e) {
-      reject(e);
+    let retries = 0;
+    while (retries < 3) {
+      try {
+        await _doSaveToFirestore(symbol, candles, metrics, fundamentals);
+        resolve();
+        break;
+      } catch(e) {
+        if (e.code === 'resource-exhausted' && retries < 2) {
+          // Bei Überlastung länger warten und nochmal versuchen
+          retries++;
+          console.warn('Firestore resource-exhausted [' + symbol + '], Retry ' + retries + '/3 in ' + (retries * 2000) + 'ms');
+          await new Promise(r => setTimeout(r, retries * 2000));
+        } else {
+          reject(e);
+          break;
+        }
+      }
     }
-    // 150ms Pause zwischen Writes – verhindert Write-Stream-Überlastung
-    if (_fsQueue.length > 0) await new Promise(r => setTimeout(r, 150));
+    // 400ms Pause zwischen Writes – verhindert Write-Stream-Überlastung
+    if (_fsQueue.length > 0) await new Promise(r => setTimeout(r, 400));
   }
   _fsRunning = false;
 }
@@ -3015,8 +3027,18 @@ window.seConfirmAdd = async () => {
   ALL_STOCKS[sym].name = name;
   if (!ALL_STOCKS[sym].indices.includes(idx)) ALL_STOCKS[sym].indices.push(idx);
   seHideAddForm();
+  const addBtn = document.querySelector('#seAddForm .load-btn');
+  if (addBtn) { addBtn.disabled = true; addBtn.textContent = 'Speichert…'; }
+  try {
+    await seSaveAddToFirestore(idx,sym,name);
+    if (addBtn) { addBtn.textContent = 'Hinzugefügt ✓'; }
+  } catch(e) {
+    if (addBtn) { addBtn.textContent = 'Fehler ✗'; }
+    console.error('seConfirmAdd Firestore error:', e);
+  }
+  await new Promise(r => setTimeout(r, 800));
+  if (addBtn) { addBtn.disabled = false; addBtn.textContent = 'Hinzufügen'; }
   seRenderList();
-  await seSaveAddToFirestore(idx,sym,name);
 };
 
 window.seOpenEdit = (sym, name) => {
@@ -3039,6 +3061,8 @@ window.seConfirmEdit = async () => {
   const newName = document.getElementById('seEditName').value.trim();
   const newSym  = document.getElementById('seEditSym').value.trim().toUpperCase();
   if (!newName || !newSym) return;
+  const saveBtn = document.getElementById('seEditSaveBtn');
+  if (saveBtn) { saveBtn.disabled = true; saveBtn.textContent = 'Speichert…'; }
   const {idx, origSym} = seEditTarget;
   // ALL_STOCKS aktualisieren (Ticker umbenennen oder nur Name ändern)
   if (ALL_STOCKS[origSym]) {
@@ -3057,9 +3081,18 @@ window.seConfirmEdit = async () => {
     await saveErrorsToFirestore(seLastErrors);
     seUpdateErrorBtn();
   }
+  try {
+    await seUpdateInFirestore(idx,origSym,newSym,newName);
+    if (saveBtn) { saveBtn.textContent = 'Gespeichert ✓'; saveBtn.style.background = 'var(--green,#22c55e)'; }
+    await new Promise(r => setTimeout(r, 800));
+  } catch(e) {
+    if (saveBtn) { saveBtn.textContent = 'Fehler ✗'; saveBtn.style.background = '#ef4444'; }
+    await new Promise(r => setTimeout(r, 1200));
+    console.error('seConfirmEdit Firestore error:', e);
+  }
+  if (saveBtn) { saveBtn.disabled = false; saveBtn.textContent = 'Speichern'; saveBtn.style.background = ''; }
   document.getElementById('seEditOverlay').classList.remove('visible');
   seRenderList();
-  await seUpdateInFirestore(idx,origSym,newSym,newName);
 };
 
 window.seDeleteStock = async () => {
@@ -3075,9 +3108,19 @@ window.seDeleteStock = async () => {
     await saveErrorsToFirestore(seLastErrors);
     seUpdateErrorBtn();
   }
+  const delBtn = document.getElementById('seDeleteBtn');
+  if (delBtn) { delBtn.disabled = true; delBtn.textContent = 'Wird entfernt…'; }
+  try {
+    await seDeleteFromFirestore(idx,origSym);
+    if (delBtn) { delBtn.textContent = 'Entfernt ✓'; }
+    await new Promise(r => setTimeout(r, 600));
+  } catch(e) {
+    if (delBtn) { delBtn.textContent = 'Fehler ✗'; }
+    console.error('seDeleteStock Firestore error:', e);
+    await new Promise(r => setTimeout(r, 1200));
+  }
   document.getElementById('seEditOverlay').classList.remove('visible');
   seRenderList();
-  await seDeleteFromFirestore(idx,origSym);
 };
 
 function seSetErrors(errs) {
@@ -3568,8 +3611,8 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
       <input class="filter-input" id="seEditName" style="width:100%;margin-bottom:14px;font-family:-apple-system,sans-serif;font-size:15px" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px">Yahoo-Kürzel</div>
       <input class="filter-input" id="seEditSym" style="width:100%;margin-bottom:16px;font-family:monospace;font-size:15px" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
-      <button class="load-btn" onclick="seConfirmEdit()" style="margin-bottom:10px">Speichern</button>
-      <button onclick="seDeleteStock()" style="width:100%;padding:12px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.28);border-radius:12px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer">Entfernen</button>
+      <button id="seEditSaveBtn" class="load-btn" onclick="seConfirmEdit()" style="margin-bottom:10px">Speichern</button>
+      <button id="seDeleteBtn" onclick="seDeleteStock()" style="width:100%;padding:12px;background:rgba(239,68,68,.12);border:1px solid rgba(239,68,68,.28);border-radius:12px;color:#ef4444;font-size:15px;font-weight:700;cursor:pointer">Entfernen</button>
     </div>
   </div>
 </div>
