@@ -1993,6 +1993,8 @@ const FP_VARS = [
   { name: 'nearma(p, pct)',    insert: 'nearma(50, 2)',                 desc: 'Near MA: Kurs liegt innerhalb ±pct% des gleitenden Durchschnitts — ideal um Pullbacks ans gleitende Mittel zu finden. p = MA-Periode, pct = Toleranz in %.', example: 'nearma(50, 2) && rsi < 45' },
   { name: 'trend(n)',          insert: 'trend(20)',                     desc: 'Trendstärke: Anteil grüner Kerzen in den letzten n Tagen in % (0–100). 70+ = starker Aufwärtstrend, 30- = starker Abwärtstrend.', example: 'trend(20) > 70 && close > ma(50)' },
   { name: 'rs(n)',             insert: 'rs(50)',                        desc: 'Relative Stärke: Performance dieser Aktie über n Tage minus Durchschnitt aller geladenen Aktien. Positiv = outperformt den Scanner, negativ = underperformt.', example: 'rs(50) > 10 && trend(20) > 60' },
+  { name: 'interday',         insert: 'interday',                      desc: 'Interday-Performance in % — Veränderung vom Eröffnungskurs zum Schlusskurs des aktuellen Handelstages ((close - open) / open × 100). Positiv = heute im Plus, negativ = heute im Minus.', example: 'interday > 2 && rvol > 1.5' },
+  { name: 'insidebar(n)',     insert: 'insidebar(1)',                   desc: 'Inside Bar: prüft ob die letzten n Kerzen jeweils vollständig innerhalb der vorherigen Kerze liegen (High ≤ Vortages-High und Low ≥ Vortages-Low). n=1 = einfache Inside Bar, n=2 = Double, n=3 = Triple. Signalisiert Konsolidierung und aufgestaute Energie vor einem Ausbruch.', example: 'insidebar(2) && close > ma(50) && rvol < 0.8' },
 ];
 
 const FP_OPS = [
@@ -2273,6 +2275,18 @@ function evalExpr(expr, m, candles) {
     const bbLower = bbMean !== null ? bbMean - 2 * bbStd : null;
     const gapVal = candles.length >= 2 ? ((op[op.length - 1] - cl[cl.length - 2]) / cl[cl.length - 2]) * 100 : null;
     const bodyVal = op[op.length - 1] ? (Math.abs(cl[cl.length - 1] - op[op.length - 1]) / op[op.length - 1]) * 100 : null;
+    const interdayVal = op[op.length - 1] ? ((cl[cl.length - 1] - op[op.length - 1]) / op[op.length - 1]) * 100 : null;
+
+    // ── Inside Bar: n aufeinanderfolgende Kerzen jeweils in der vorherigen ──
+    const insidebarFunc = (n=1) => {
+      if (candles.length < n+1) return false;
+      for (let i = 0; i < n; i++) {
+        const cur  = candles[candles.length - 1 - i];
+        const prv  = candles[candles.length - 2 - i];
+        if (cur.high > prv.high || cur.low < prv.low) return false;
+      }
+      return true;
+    };
 
     const waveFunc       = (label, days=60)        => detectElliottWave(candles, label, days);
     const fibRetFunc     = (level, days=50, tol=2) => calcFibRetracement(candles, level, days, tol);
@@ -2387,6 +2401,7 @@ function evalExpr(expr, m, candles) {
       'wave','fib_retracement','fib_extension',
       'squeeze','breakout','doji','hammer','engulfing',
       'consec','nearma','trend','rs',
+      'interday','insidebar',
       `return !!(${expr})`
     )(
       m.close, m.open, m.high, m.low, m.volume,
@@ -2398,7 +2413,8 @@ function evalExpr(expr, m, candles) {
       gapVal, bodyVal,
       waveFunc, fibRetFunc, fibExtFunc,
       squeezeFunc, breakoutFunc, dojiVal, hammerVal, engulfingVal,
-      consecFunc, nearmaFunc, trendFunc, rsFunc
+      consecFunc, nearmaFunc, trendFunc, rsFunc,
+      interdayVal, insidebarFunc
     ));
   } catch { return false; }
 }
