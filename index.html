@@ -992,88 +992,71 @@ window.doLogin = async () => {
 };
 window.doLogout = () => signOut(auth);
 
-// ── Firestore ─────────────────────────────────────────────────────────────────
-// Write-Queue: verhindert resource-exhausted bei vielen parallelen Saves
-const _fsQueue = [];
-const FS_WORKERS = 10;
-let   _fsActiveWorkers = 0;
+// ── IndexedDB Cache ────────────────────────────────────────────────────────────
+// Ersetzt den Firestore cache/{symbol} – läuft komplett lokal, kein Quota-Problem
+const IDB_NAME    = 'ScannerCache';
+const IDB_VERSION = 1;
+const IDB_STORE   = 'candles';
 
-async function _fsWorker() {
-  _fsActiveWorkers++;
-  while (_fsQueue.length > 0) {
-    const job = _fsQueue.shift();
-    if (!job) break;
-    const { symbol, candles, metrics, fundamentals, resolve, reject } = job;
-    let retries = 0;
-    while (retries < 3) {
-      try {
-        await _doSaveToFirestore(symbol, candles, metrics, fundamentals);
-        resolve();
-        break;
-      } catch(e) {
-        if ((e.code === 'resource-exhausted' || e.code === 'unavailable') && retries < 2) {
-          retries++;
-          console.warn('Firestore exhausted [' + symbol + '], Retry ' + retries + ' in ' + (retries * 500) + 'ms');
-          await new Promise(r => setTimeout(r, retries * 500));
-        } else {
-          reject(e);
-          break;
-        }
-      }
-    }
-  }
-  _fsActiveWorkers--;
-}
+let _idb = null;
 
-function _fsFlush() {
-  while (_fsActiveWorkers < FS_WORKERS && _fsQueue.length > 0) {
-    _fsWorker();
-  }
-}
-
-async function saveToFirestore(symbol, candles, metrics, fundamentals={}) {
+function openIDB() {
+  if (_idb) return Promise.resolve(_idb);
   return new Promise((resolve, reject) => {
-    _fsQueue.push({ symbol, candles, metrics, fundamentals, resolve, reject });
-    _fsFlush();
+    const req = indexedDB.open(IDB_NAME, IDB_VERSION);
+    req.onupgradeneeded = e => {
+      e.target.result.createObjectStore(IDB_STORE, { keyPath: 'symbol' });
+    };
+    req.onsuccess = e => { _idb = e.target.result; resolve(_idb); };
+    req.onerror   = e => reject(e.target.error);
   });
 }
 
-async function _doSaveToFirestore(symbol, candles, metrics, fundamentals={}) {
-  if (!currentUser) return;
-
-  const candlesStr = JSON.stringify(candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume]));
-
-  // User-Dokument: NUR Metadaten (kein Candles-String) → klein, schnell zu laden
-  const userPayload = {
-    name: fundamentals?.longName || ALL_STOCKS[symbol]?.name || symbol,
-    indices: ALL_STOCKS[symbol]?.indices ?? [],
-    lastUpdated: Date.now(),
-    metrics,
-    fundamentals,
-    // Kein candles-Feld hier!
-  };
-  await setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), userPayload);
-
-  // Candles NUR im geteilten Cache (cache/{symbol})
+async function saveToCache(symbol, candles, metrics, fundamentals={}) {
   try {
-    await setDoc(doc(db,'cache',symbol), {
-      ...userPayload,
-      candles: candlesStr,
+    const db2 = await openIDB();
+    const payload = {
+      symbol,
+      name:         fundamentals?.longName || ALL_STOCKS[symbol]?.name || symbol,
+      indices:      ALL_STOCKS[symbol]?.indices ?? [],
+      lastUpdated:  Date.now(),
+      metrics,
+      fundamentals,
+      candles:      candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume]),
+    };
+    await new Promise((res, rej) => {
+      const tx  = db2.transaction(IDB_STORE, 'readwrite');
+      const req = tx.objectStore(IDB_STORE).put(payload);
+      req.onsuccess = res;
+      req.onerror   = e => rej(e.target.error);
     });
+    // Metadaten (ohne Candles) weiterhin in Firestore für User-Profil
+    if (currentUser) {
+      const userPayload = {
+        name:        payload.name,
+        indices:     payload.indices,
+        lastUpdated: payload.lastUpdated,
+        metrics,
+        fundamentals,
+      };
+      setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), userPayload).catch(()=>{});
+    }
   } catch(e) {
-    console.warn('Shared cache write [' + symbol + ']:', e.message);
+    console.warn('IDB save [' + symbol + ']:', e.message);
   }
 }
 
-// Laedt Candles aus dem geteilten Cache (cache/{symbol})
 async function loadFromSharedCache(symbol) {
   try {
-    const snap = await getDoc(doc(db,'cache',symbol));
-    if (!snap.exists()) return null;
-    const raw = snap.data();
-    const candles = JSON.parse(raw.candles||'[]')
-      .map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]}));
-    if (!candles.length) return null;
+    const db2 = await openIDB();
+    const raw = await new Promise((res, rej) => {
+      const tx  = db2.transaction(IDB_STORE, 'readonly');
+      const req = tx.objectStore(IDB_STORE).get(symbol);
+      req.onsuccess = e => res(e.target.result);
+      req.onerror   = e => rej(e.target.error);
+    });
+    if (!raw?.candles?.length) return null;
+    const candles = raw.candles.map(r=>({time:r[0],open:r[1],high:r[2],low:r[3],close:r[4],volume:r[5]}));
     return {
       candles,
       metrics:      raw.metrics      ?? null,
@@ -1082,7 +1065,7 @@ async function loadFromSharedCache(symbol) {
       name:         raw.name         ?? symbol,
     };
   } catch(e) {
-    console.warn(`Shared cache read [${symbol}]:`, e.message);
+    console.warn('IDB load [' + symbol + ']:', e.message);
     return null;
   }
 }
@@ -1707,7 +1690,7 @@ async function loadFromFirestoreCache() {
     const CACHE_BATCH = 20;
     for(let i=0; i<toLoad.length; i+=CACHE_BATCH) {
       const chunk = toLoad.slice(i, i+CACHE_BATCH);
-      updateProgress(i, total, `${i+1}–${Math.min(i+CACHE_BATCH, toLoad.length)} von ${total} (Firestore)`);
+      updateProgress(i, total, `${i+1}–${Math.min(i+CACHE_BATCH, toLoad.length)} von ${total} (Cache)`);
       await Promise.all(chunk.map(async sym => {
         if (stockData[sym]?.candles?.length) return;
         const cached = await loadFromSharedCache(sym);
@@ -1797,15 +1780,14 @@ async function refreshFromYahoo() {
             indices: info.indices,
             lastUpdated: Date.now()
           };
-          // Status sofort aktualisieren – vor Firestore-Save
+          // Status sofort aktualisieren
           const _n = Object.keys(stockData).length;
           const _ts = stockData[sym].lastUpdated;
           const _d = new Date(_ts).toLocaleDateString('de-DE',{day:'2-digit',month:'2-digit',year:'2-digit',hour:'2-digit',minute:'2-digit'});
           setStatus('live', _n + ' Aktien · ' + _d);
-          // Firestore-Save in parallele Worker-Queue
-          saveToFirestore(sym, candles, metrics, mergedFund).catch(e=>{
-            console.error('Firestore save failed [' + sym + ']:', e.code||e.message);
-            errors.push(sym + '(DB)');
+          // Lokal in IndexedDB speichern (kein Quota, kein Netzwerk)
+          saveToCache(sym, candles, metrics, mergedFund).catch(e=>{
+            console.error('IDB save failed [' + sym + ']:', e.message);
           });
         } catch(e) {
           console.warn(`Failed [${sym}]:`, e.message);
@@ -1816,24 +1798,6 @@ async function refreshFromYahoo() {
     }
   } catch(fatalErr) {
     console.error('refreshFromYahoo fatal error:', fatalErr);
-  }
-
-  // Warten bis alle Firestore-Worker fertig sind
-  if (_fsQueue.length > 0 || _fsActiveWorkers > 0) {
-    const totalWrites = _fsQueue.length + _fsActiveWorkers;
-    await new Promise(resolve => {
-      const check = setInterval(() => {
-        const remaining = _fsQueue.length + _fsActiveWorkers;
-        const done = Math.max(0, totalWrites - remaining);
-        if (totalWrites > 0) {
-          updateProgress(done, totalWrites, 'Speichere ' + done + ' von ' + totalWrites + ' in Firestore...');
-        }
-        if (_fsQueue.length === 0 && _fsActiveWorkers === 0) {
-          clearInterval(check);
-          resolve();
-        }
-      }, 300);
-    });
   }
 
   showProgress(false);
@@ -1959,10 +1923,7 @@ window.closeFilterPopup = (e) => {
 
 // ── Filter Popup Variable Chips ───────────────────────────────────────────────
 const FP_VARS = [
-  { name: 'close',      insert: 'close',          desc: 'Aktueller Schlusskurs (letzter verfügbarer Close)',                                             example: 'close > 100' },
-  { name: 'close(n)',   insert: 'close(1)',        desc: 'Schlusskurs von vor n Handelstagen — close(1) = gestern, close(2) = vorgestern usw.',           example: 'close > close(1) && close(1) > close(2)' },
-  { name: 'minClose(von,bis)', insert: 'minClose(1,3)', desc: 'Niedrigster Schlusskurs im Fenster von Tag „von" bis Tag „bis" (rückwärts von heute). minClose(1,3) = Minimum von gestern bis vor 3 Tagen.', example: 'close > minClose(1,3)' },
-  { name: 'maxClose(von,bis)', insert: 'maxClose(1,3)', desc: 'Höchster Schlusskurs im Fenster von Tag „von" bis Tag „bis" (rückwärts von heute). maxClose(1,3) = Maximum von gestern bis vor 3 Tagen.', example: 'close > maxClose(1,5)' },
+  { name: 'close',      insert: 'close',          desc: 'Aktueller Schlusskurs',                                                                         example: 'close > 100' },
   { name: 'open',       insert: 'open',           desc: 'Eröffnungskurs des letzten Handelstages',                                                        example: 'close > open' },
   { name: 'high',       insert: 'high',           desc: 'Tageshoch des letzten Handelstages',                                                             example: 'high > high52w * 0.99' },
   { name: 'low',        insert: 'low',            desc: 'Tagestief des letzten Handelstages',                                                             example: 'low < ma(50)' },
@@ -2393,39 +2354,6 @@ function evalExpr(expr, m, candles) {
       return myChange - avg;
     };
 
-    // ── close(n): Proxy-Objekt — close allein = letzter Close (valueOf),
-    //    close(n) = Close von vor n Handelstagen (Funktionsaufruf)
-    const closeFunc = (n) => {
-      if (n == null || n === 0) return cl[cl.length - 1];
-      const idx2 = cl.length - 1 - Math.max(0, Math.round(n));
-      return idx2 >= 0 ? cl[idx2] : null;
-    };
-    const closeProxy = new Proxy(closeFunc, {
-      get(target, prop) {
-        // Für valueOf/Symbol.toPrimitive → aktueller Close
-        if (prop === Symbol.toPrimitive || prop === 'valueOf') return () => cl[cl.length - 1];
-        return target[prop];
-      }
-    });
-    // Primitiv-Konvertierung: close > 100 funktioniert via [Symbol.toPrimitive]
-    closeProxy[Symbol.toPrimitive] = () => cl[cl.length - 1];
-
-    // ── minClose(from, to): niedrigster Close im Fenster [from..to] Tage zurück
-    const minCloseFunc = (from, to) => {
-      const f = Math.max(0, Math.round(from));
-      const t = Math.max(f, Math.round(to));
-      const slice = cl.slice(Math.max(0, cl.length - 1 - t), cl.length - f);
-      return slice.length ? Math.min(...slice) : null;
-    };
-
-    // ── maxClose(from, to): höchster Close im Fenster [from..to] Tage zurück
-    const maxCloseFunc = (from, to) => {
-      const f = Math.max(0, Math.round(from));
-      const t = Math.max(f, Math.round(to));
-      const slice = cl.slice(Math.max(0, cl.length - 1 - t), cl.length - f);
-      return slice.length ? Math.max(...slice) : null;
-    };
-
     return !!(new Function(
       'close','open','high','low','volume',
       'rsi','high52w','low52w',
@@ -2438,10 +2366,9 @@ function evalExpr(expr, m, candles) {
       'squeeze','breakout','doji','hammer','engulfing',
       'consec','nearma','trend','rs',
       'interday','insidebar',
-      'minClose','maxClose',
       `return !!(${expr})`
     )(
-      closeProxy, m.open, m.high, m.low, m.volume,
+      m.close, m.open, m.high, m.low, m.volume,
       m.rsi, m.high52w, m.low52w,
       maFunc, emaFunc, changeFunc, rangeFunc,
       avgvolFunc, rvolVal, abovemaFunc,
@@ -2451,8 +2378,7 @@ function evalExpr(expr, m, candles) {
       waveFunc, fibRetFunc, fibExtFunc,
       squeezeFunc, breakoutFunc, dojiVal, hammerVal, engulfingVal,
       consecFunc, nearmaFunc, trendFunc, rsFunc,
-      interdayVal, insidebarFunc,
-      minCloseFunc, maxCloseFunc
+      interdayVal, insidebarFunc
     ));
   } catch { return false; }
 }
