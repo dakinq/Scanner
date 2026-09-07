@@ -993,7 +993,6 @@ window.doLogin = async () => {
 window.doLogout = () => signOut(auth);
 
 // ── IndexedDB Cache ────────────────────────────────────────────────────────────
-// Ersetzt den Firestore cache/{symbol} – läuft komplett lokal, kein Quota-Problem
 const IDB_NAME    = 'ScannerCache';
 const IDB_VERSION = 1;
 const IDB_STORE   = 'candles';
@@ -1012,37 +1011,58 @@ function openIDB() {
   });
 }
 
+// Write-Queue: max 5 parallele IDB-Transaktionen (Browser-Limit schützen)
+const _idbQueue = [];
+let   _idbActive = 0;
+const IDB_CONCURRENCY = 5;
+
+function _idbFlush() {
+  while (_idbActive < IDB_CONCURRENCY && _idbQueue.length > 0) {
+    const { fn, resolve, reject } = _idbQueue.shift();
+    _idbActive++;
+    fn().then(v => { _idbActive--; resolve(v); _idbFlush(); })
+        .catch(e => { _idbActive--; reject(e);  _idbFlush(); });
+  }
+}
+
+function _idbEnqueue(fn) {
+  return new Promise((resolve, reject) => {
+    _idbQueue.push({ fn, resolve, reject });
+    _idbFlush();
+  });
+}
+
 async function saveToCache(symbol, candles, metrics, fundamentals={}) {
-  try {
+  const payload = {
+    symbol,
+    name:         fundamentals?.longName || ALL_STOCKS[symbol]?.name || symbol,
+    indices:      ALL_STOCKS[symbol]?.indices ?? [],
+    lastUpdated:  Date.now(),
+    metrics,
+    fundamentals,
+    candles:      candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume]),
+  };
+
+  await _idbEnqueue(async () => {
     const db2 = await openIDB();
-    const payload = {
-      symbol,
-      name:         fundamentals?.longName || ALL_STOCKS[symbol]?.name || symbol,
-      indices:      ALL_STOCKS[symbol]?.indices ?? [],
-      lastUpdated:  Date.now(),
-      metrics,
-      fundamentals,
-      candles:      candles.map(c=>[c.time,c.open,c.high,c.low,c.close,c.volume]),
-    };
     await new Promise((res, rej) => {
       const tx  = db2.transaction(IDB_STORE, 'readwrite');
-      const req = tx.objectStore(IDB_STORE).put(payload);
-      req.onsuccess = res;
-      req.onerror   = e => rej(e.target.error);
+      tx.oncomplete = res;                          // warten bis wirklich auf Disk
+      tx.onerror    = e => rej(e.target.error);
+      tx.onabort    = e => rej(new Error('IDB tx aborted: ' + symbol));
+      tx.objectStore(IDB_STORE).put(payload);
     });
-    // Metadaten (ohne Candles) weiterhin in Firestore für User-Profil
-    if (currentUser) {
-      const userPayload = {
-        name:        payload.name,
-        indices:     payload.indices,
-        lastUpdated: payload.lastUpdated,
-        metrics,
-        fundamentals,
-      };
-      setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), userPayload).catch(()=>{});
-    }
-  } catch(e) {
-    console.warn('IDB save [' + symbol + ']:', e.message);
+  }).catch(e => console.warn('IDB save [' + symbol + ']:', e.message));
+
+  // Metadaten (ohne Candles) weiterhin in Firestore für User-Profil
+  if (currentUser) {
+    setDoc(doc(db,'users',currentUser.uid,'stocks',symbol), {
+      name:        payload.name,
+      indices:     payload.indices,
+      lastUpdated: payload.lastUpdated,
+      metrics,
+      fundamentals,
+    }).catch(()=>{});
   }
 }
 
