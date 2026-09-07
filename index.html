@@ -974,6 +974,10 @@ async function initApp(user) {
     setStatus('', 'Bereit');
     document.getElementById('loadBtn').textContent = 'Daten laden';
 
+    // Lokalen Cache automatisch laden — kein Klick nötig
+    // Wenn IDB leer → nichts passiert, Button bleibt sichtbar
+    await loadFromFirestoreCache();
+
   } catch(e) {
     console.error('initApp Fehler:', e);
     setStatus('', 'Fehler beim Start');
@@ -1680,14 +1684,13 @@ async function fetchCandlesAndFundamentals(symbol, days=CANDLE_DAYS) {
 // ── Main Load ─────────────────────────────────────────────────────────────────
 window.loadAllData = async () => {
   if (isLoading) return;
-  // Zweiter Klick → Yahoo-Aktualisierung
+  // Cache wurde bereits beim Start geladen → immer Yahoo
   if (dataLoaded) {
     await refreshFromYahoo();
     return;
   }
-  // Erster Klick → lokalen Cache laden
+  // Cache war beim Start leer → laden + falls immer noch leer direkt Yahoo
   await loadFromFirestoreCache();
-  // Wenn Cache leer war (erster Start / leere IDB) → direkt von Yahoo laden
   if (!dataLoaded) {
     await refreshFromYahoo();
   }
