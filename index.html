@@ -1665,8 +1665,12 @@ window.loadAllData = async () => {
     await refreshFromYahoo();
     return;
   }
-  // Erster Klick → nur Firestore-Cache laden
+  // Erster Klick → lokalen Cache laden
   await loadFromFirestoreCache();
+  // Wenn Cache leer war (erster Start / leere IDB) → direkt von Yahoo laden
+  if (!dataLoaded) {
+    await refreshFromYahoo();
+  }
 };
 
 // ── Phase 1: Daten aus Firestore-Cache laden ──────────────────────────────────
