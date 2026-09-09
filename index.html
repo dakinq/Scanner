@@ -1966,8 +1966,10 @@ const FP_VARS = [
   { name: 'volume',     insert: 'volume',         desc: 'Handelsvolumen des letzten Tages (Anzahl gehandelter Aktien)',                                   example: 'volume > 1000000' },
   { name: 'avgvol(n)',  insert: 'avgvol(20)',      desc: 'Durchschnittsvolumen der letzten n Tage — Vergleichsbasis für Volumenausbrüche',                example: 'volume > avgvol(20) * 1.5' },
   { name: 'rvol',       insert: 'rvol',           desc: 'Relatives Volumen: heutiges Volumen geteilt durch 20-Tage-Schnitt (1.0 = normal, >2 = Ausbruch)', example: 'rvol > 2' },
-  { name: 'ma(n)',      insert: 'ma(50)',          desc: 'Gleitender Durchschnitt über n Tage (z.B. ma(20), ma(50), ma(200))',                            example: 'close > ma(50) && ma(20) > ma(200)' },
-  { name: 'ema(n)',     insert: 'ema(20)',         desc: 'Exponentieller gleitender Durchschnitt über n Tage — reagiert schneller auf Kursbewegungen',    example: 'close > ema(20) && ema(20) > ema(50)' },
+  { name: 'ma(n)',          insert: 'ma(50)',          desc: 'Gleitender Durchschnitt über n Tage — ma(50) = heute, ma(50,4) = MA von vor 4 Tagen',          example: 'close > ma(50) && ma(20) > ma(20,4)' },
+  { name: 'ma(n, offset)',  insert: 'ma(50,4)',        desc: 'MA von vor `offset` Handelstagen — z.B. ma(20,1) = gestriger MA(20), ma(50,4) = MA(50) vor 4 Tagen', example: 'ma(20) > ma(20,4)' },
+  { name: 'ema(n)',         insert: 'ema(20)',         desc: 'Exponentieller gleitender Durchschnitt — ema(20) = heute, ema(20,4) = EMA von vor 4 Tagen',       example: 'close > ema(20) && ema(20) > ema(50)' },
+  { name: 'ema(n, offset)', insert: 'ema(20,4)',       desc: 'EMA von vor `offset` Handelstagen — z.B. ema(20,1) = gestriger EMA(20), ema(50,4) = EMA(50) vor 4 Tagen', example: 'ema(20) > ema(20,4)' },
   { name: 'abovema(n)', insert: 'abovema(50,20)', desc: 'Anzahl Tage mit close > ma(n) in den letzten X Tagen — misst Trendstärke. Syntax: abovema(Periode, Tage)', example: 'abovema(50,20) >= 15' },
   { name: 'change(n)',  insert: 'change(1)',       desc: 'Kursveränderung der letzten n Tage in % (change(1) = heute, change(30) = 30 Tage)',             example: 'change(1) > 2 && change(30) > 10' },
   { name: 'rsi',        insert: 'rsi',            desc: 'Relative Strength Index (14 Perioden, 0–100) — unter 30 = überverkauft, über 70 = überkauft',   example: 'rsi < 30' },
@@ -2234,8 +2236,20 @@ function evalExpr(expr, m, candles) {
     const hi = candles.map(c => c.high);
     const lo = candles.map(c => c.low);
     const vol = candles.map(c => c.volume);
-    const maFunc = (n) => calcMA(cl, n);
-    const emaFunc = (n) => calcEMA(cl, n);
+    // ma(period, offset=0): MA von vor `offset` Tagen — ma(50) = heute, ma(50,4) = vor 4 Tagen
+    const maFunc = (n, offset=0) => {
+      if (!offset) return calcMA(cl, n);
+      const off = Math.max(0, Math.round(offset));
+      const sliced = cl.slice(0, cl.length - off);
+      return calcMA(sliced, n);
+    };
+    // ema(period, offset=0): EMA von vor `offset` Tagen
+    const emaFunc = (n, offset=0) => {
+      if (!offset) return calcEMA(cl, n);
+      const off = Math.max(0, Math.round(offset));
+      const sliced = cl.slice(0, cl.length - off);
+      return calcEMA(sliced, n);
+    };
     const changeFunc = (n) => {
       if (!cl.length) return null;
       const ref = cl[Math.max(0, cl.length - 1 - Math.max(n, 1))];
