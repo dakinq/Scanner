@@ -1931,7 +1931,11 @@ window.openFilterPopup = (fav) => {
   editingFilterId = fav ? fav.id : null;
   document.getElementById('filterPopupTitle').textContent = fav ? 'Filter bearbeiten' : 'Filter hinzufügen';
   document.getElementById('fpName').value = fav ? fav.name : '';
-  document.getElementById('fpExpr').value = fav ? fav.expr : '';
+  // Bestehenden Ausdruck lesbar formatieren: && und || auf neue Zeilen
+  const raw = fav ? fav.expr : '';
+  document.getElementById('fpExpr').value = raw
+    ? raw.replace(/\s*(&&|\|\|)\s*/g, '\n$1 ').trim()
+    : '';
   document.getElementById('fpDeleteBtn').style.display = fav ? 'block' : 'none';
   document.getElementById('fpVarInfo').style.display = 'none';
   fpBuildChips();
@@ -2009,9 +2013,29 @@ const FP_OPS = [
   { label: '%',  insert: ' % ' },
 ];
 
-function fpAppend(text) {
+function fpInsert(text) {
   const el = document.getElementById('fpExpr');
-  el.value = el.value + text;
+  const start = el.selectionStart ?? el.value.length;
+  const end   = el.selectionEnd   ?? el.value.length;
+  const before = el.value.slice(0, start);
+  const after  = el.value.slice(end);
+
+  // && und || bekommen einen Zeilenumbruch davor (wenn nicht schon am Zeilenanfang)
+  let insert = text;
+  if ((text.trim() === '&&' || text.trim() === '||')) {
+    const trimmed = before.trimEnd();
+    const needsNewline = trimmed.length > 0 && !trimmed.endsWith('\n');
+    insert = (needsNewline ? '\n' : '') + text.trimStart();
+    // Sicherstellen dass nach && ein Leerzeichen + Newline folgt
+    insert = insert.replace(/(&&|\|\|)\s*$/, '$1\n  ');
+  }
+
+  el.value = before + insert + after;
+  const cursor = start + insert.length;
+  el.selectionStart = el.selectionEnd = cursor;
+  el.focus();
+  // Textarea nach unten scrollen damit der Cursor sichtbar ist
+  el.scrollTop = el.scrollHeight;
 }
 
 function fpBuildChips() {
@@ -2022,7 +2046,7 @@ function fpBuildChips() {
     const chip = document.createElement('span');
     chip.className = 'op-code';
     chip.textContent = op.label;
-    chip.addEventListener('click', () => fpAppend(op.insert));
+    chip.addEventListener('click', () => fpInsert(op.insert));
     opContainer.appendChild(chip);
   });
 
@@ -2034,7 +2058,7 @@ function fpBuildChips() {
     chip.className = 'hint-code';
     chip.textContent = v.name;
     chip.addEventListener('click', () => {
-      fpAppend(v.insert);
+      fpInsert(v.insert);
       document.getElementById('fpInfoName').textContent = v.name;
       document.getElementById('fpInfoDesc').textContent = v.desc;
       document.getElementById('fpInfoExample').textContent = 'z.B. ' + v.example;
@@ -2047,7 +2071,9 @@ function fpBuildChips() {
 
 window.saveFilterFavorite = async () => {
   const name = document.getElementById('fpName').value.trim();
-  const expr = document.getElementById('fpExpr').value.trim();
+  // Zeilenumbrüche normalisieren → einzeiliger Ausdruck für evalExpr
+  const expr = document.getElementById('fpExpr').value
+    .split('\n').map(l => l.trim()).filter(Boolean).join(' ').trim();
   if (!name || !expr) return;
   const id = editingFilterId || 'f_' + Date.now();
   const fav = {id, name, expr};
@@ -3415,6 +3441,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 .op-code{background:var(--dim);border:1px solid var(--cyan);padding:7px 12px;border-radius:8px;color:var(--text);font-size:15px;font-family:monospace;cursor:pointer;display:inline-block;font-weight:700;-webkit-tap-highlight-color:transparent}
 .op-code:active{background:var(--surf2)}
 #filterPopupSheet .filter-input{display:block;font-size:15px;padding:10px 12px}
+#filterPopupSheet #fpExpr{font-size:14px;padding:10px 12px;line-height:1.6;min-height:90px}
 #fpVarInfo{font-size:13px}
 
 .summary-bar{display:none;padding:7px 14px;align-items:center;justify-content:space-between;border-bottom:1px solid var(--border)}
@@ -3619,9 +3646,10 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
         autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
         style="width:100%;margin-bottom:14px;font-family:-apple-system,sans-serif"/>
       <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:5px">Ausdruck</div>
-      <input class="filter-input" id="fpExpr" placeholder="close > ma50 && rsi < 40"
+      <textarea class="filter-input" id="fpExpr" placeholder="close > ma(50) && rsi < 40"
         autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"
-        style="width:100%;margin-bottom:12px;font-family:monospace"/>
+        rows="4"
+        style="width:100%;margin-bottom:12px;font-family:monospace;resize:none;line-height:1.6"></textarea>
 
       <div style="background:var(--surf2);border-radius:10px;padding:12px;margin-bottom:16px">
         <div style="font-size:11px;color:var(--muted);margin-bottom:10px;text-transform:uppercase;letter-spacing:.5px">Operatoren</div>
