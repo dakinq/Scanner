@@ -2828,6 +2828,179 @@ window.closeModal = e => {
   modalSym = null;
 };
 
+// ── Saisonalität ─────────────────────────────────────────────────────────────
+const SEASON_COLORS = [
+  '#06b6d4','#3b82f6','#a855f7','#22c55e','#f59e0b',
+  '#ef4444','#ec4899','#14b8a6','#f97316','#8b5cf6'
+];
+let seasonSym = null;
+let seasonSelectedYears = new Set();
+let seasonChartInst = null;
+
+window.openSeasonSheet = () => {
+  seasonSym = modalSym;
+  if (!seasonSym) return;
+  const name = stockData[seasonSym]?.name || seasonSym;
+  document.getElementById('seasonSymLabel').textContent = `${seasonSym} — ${name}`;
+
+  // Zeitraum-Defaults: Jan–Dez
+  document.getElementById('seasonFromMonth').value = '0';
+  document.getElementById('seasonToMonth').value   = '11';
+
+  // Jahr-Chips: aktuelles Jahr bis 10 Jahre zurück
+  const curYear = new Date().getFullYear();
+  seasonSelectedYears = new Set();
+  const chipsEl = document.getElementById('seasonYearChips');
+  chipsEl.innerHTML = '';
+  for (let y = curYear; y >= curYear - 9; y--) {
+    seasonSelectedYears.add(y);
+    const chip = document.createElement('div');
+    chip.className = 'time-chip active';
+    chip.textContent = y;
+    chip.dataset.year = y;
+    chip.onclick = () => {
+      const yr = Number(chip.dataset.year);
+      if (seasonSelectedYears.has(yr)) {
+        seasonSelectedYears.delete(yr);
+        chip.classList.remove('active');
+      } else {
+        seasonSelectedYears.add(yr);
+        chip.classList.add('active');
+      }
+    };
+    chipsEl.appendChild(chip);
+  }
+
+  // Chart + Status zurücksetzen
+  document.getElementById('seasonStatus').textContent = '';
+  document.getElementById('seasonChart').style.display = 'none';
+  document.getElementById('seasonLegend').innerHTML = '';
+  if (seasonChartInst) { try { seasonChartInst.remove(); } catch(e){} seasonChartInst = null; }
+
+  document.getElementById('seasonOverlay').classList.add('visible');
+  document.body.style.overflow = 'hidden';
+};
+
+window.closeSeasonSheet = (e) => {
+  if (e && e.target !== document.getElementById('seasonOverlay')) return;
+  document.getElementById('seasonOverlay').classList.remove('visible');
+  document.body.style.overflow = '';
+};
+
+window.seasonSelectAll  = () => document.querySelectorAll('#seasonYearChips .time-chip').forEach(c => { seasonSelectedYears.add(Number(c.dataset.year)); c.classList.add('active'); });
+window.seasonSelectNone = () => document.querySelectorAll('#seasonYearChips .time-chip').forEach(c => { seasonSelectedYears.delete(Number(c.dataset.year)); c.classList.remove('active'); });
+
+window.loadSeasonData = async () => {
+  if (!seasonSym) return;
+  const fromM = Number(document.getElementById('seasonFromMonth').value);
+  const toM   = Number(document.getElementById('seasonToMonth').value);
+  const years = [...seasonSelectedYears].sort((a,b) => b - a);
+  if (!years.length) { document.getElementById('seasonStatus').textContent = 'Bitte mindestens ein Jahr wählen.'; return; }
+
+  const btn = document.getElementById('seasonLoadBtn');
+  btn.disabled = true;
+  btn.textContent = 'Lädt…';
+  document.getElementById('seasonStatus').textContent = '';
+
+  // Candles aus Yahoo laden — wir brauchen genug History
+  const minYear = Math.min(...years);
+  const period1 = Math.floor(new Date(minYear, fromM, 1).getTime() / 1000);
+  const period2 = Math.floor(Date.now() / 1000);
+
+  let allCandles = [];
+  try {
+    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(seasonSym)}?interval=1d&period1=${period1}&period2=${period2}&events=history`;
+    const resp = await fetch(url);
+    const json = await resp.json();
+    const res  = json?.chart?.result?.[0];
+    if (!res) throw new Error('Keine Daten');
+    const ts    = res.timestamp;
+    const q     = res.indicators.quote[0];
+    allCandles  = ts.map((t,i) => ({ time: t, close: q.close[i] })).filter(c => c.close != null);
+  } catch(e) {
+    document.getElementById('seasonStatus').textContent = '❌ Fehler beim Laden: ' + e.message;
+    btn.disabled = false; btn.textContent = '⬇ Daten laden';
+    return;
+  }
+
+  // Pro Jahr: Kerzen im gewählten Monatsfenster filtern + normalisieren (Tag 1 = 0%)
+  // X-Achse: Handelstag-Index innerhalb des Fensters (0, 1, 2, ...)
+  const seriesData = [];
+  for (const year of years) {
+    // Fenster: kann Jahresgrenze überschreiten (z.B. Okt–Feb)
+    let start, end;
+    if (fromM <= toM) {
+      start = new Date(year,   fromM, 1);
+      end   = new Date(year,   toM + 1, 0); // letzter Tag des toM
+    } else {
+      // z.B. Okt (9) bis Feb (1) → Jahresgrenze
+      start = new Date(year,     fromM, 1);
+      end   = new Date(year + 1, toM + 1, 0);
+    }
+    const s = start.getTime() / 1000;
+    const e = end.getTime()   / 1000;
+    const slice = allCandles.filter(c => c.time >= s && c.time <= e);
+    if (slice.length < 2) continue;
+    const base = slice[0].close;
+    seriesData.push({
+      year,
+      points: slice.map((c, i) => ({ x: i, y: +((c.close / base - 1) * 100).toFixed(3) }))
+    });
+  }
+
+  if (!seriesData.length) {
+    document.getElementById('seasonStatus').textContent = 'Keine Daten für den gewählten Zeitraum.';
+    btn.disabled = false; btn.textContent = '⬇ Daten laden';
+    return;
+  }
+
+  // Chart zeichnen
+  const chartEl = document.getElementById('seasonChart');
+  chartEl.innerHTML = '';
+  chartEl.style.display = 'block';
+  if (seasonChartInst) { try { seasonChartInst.remove(); } catch(e){} }
+
+  const chart = LightweightCharts.createChart(chartEl, {
+    width:  chartEl.clientWidth || window.innerWidth - 28,
+    height: 280,
+    layout: { background: { color: 'transparent' }, textColor: '#64748b' },
+    grid:   { vertLines: { visible: false }, horzLines: { color: '#1e293b' } },
+    rightPriceScale: { borderVisible: false },
+    timeScale: { borderVisible: false, tickMarkFormatter: v => `T${v+1}` },
+    crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
+  });
+  seasonChartInst = chart;
+
+  seriesData.forEach(({ year, points }, idx) => {
+    const color = SEASON_COLORS[idx % SEASON_COLORS.length];
+    const line  = chart.addLineSeries({
+      color, lineWidth: 2,
+      priceLineVisible: false, lastValueVisible: false,
+      title: String(year),
+    });
+    // LightweightCharts braucht numerische time-Werte — wir nutzen den Index direkt
+    line.setData(points.map(p => ({ time: p.x, value: p.y })));
+  });
+
+  chart.timeScale().fitContent();
+
+  // Legende
+  const legendEl = document.getElementById('seasonLegend');
+  legendEl.innerHTML = seriesData.map(({ year }, idx) => {
+    const color = SEASON_COLORS[idx % SEASON_COLORS.length];
+    return `<div style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text)">
+      <div style="width:16px;height:3px;background:${color};border-radius:2px"></div>${year}</div>`;
+  }).join('');
+
+  const monthNames = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
+  document.getElementById('seasonStatus').textContent =
+    `${seriesData.length} Jahre geladen · ${monthNames[fromM]}–${monthNames[toM]}`;
+
+  btn.disabled = false; btn.textContent = '⬇ Daten laden';
+};
+
+
+
 // ── TradingView ──────────────────────────────────────────────────────────────
 // Der Button ist ein echter <a>-Link (href wird in openModal/saveTvEdit gesetzt).
 // Kein window.open()/synthetischer Klick: in einer als Homescreen-App installierten
@@ -2909,6 +3082,7 @@ function initSwipeToClose(sheetId, overlayId, closeFn) {
 // Init after DOM ready
 document.addEventListener('DOMContentLoaded',()=>{
   initSwipeToClose('modalSheet',       'modalOverlay',       ()=>closeModal(null));
+  initSwipeToClose('seasonSheet',      'seasonOverlay',      ()=>closeSeasonSheet(null));
   initSwipeToClose('filterPopupSheet', 'filterPopupOverlay', ()=>closeFilterPopup(null));
   initSwipeToClose('stockEditorSheet', 'stockEditorOverlay', ()=>closeStockEditor(null));
   initSwipeToClose('seEditSheet',      'seEditOverlay',      ()=>closeSeEdit(null));
@@ -3640,6 +3814,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     <div class="tv-row">
       <a class="tv-btn" id="tvBtn" href="#" rel="noopener">TradingView öffnen</a>
       <button class="tv-edit-btn" onclick="toggleTvEdit()" title="TradingView-Symbol bearbeiten">&#9998;</button>
+      <button class="tv-edit-btn" onclick="openSeasonSheet()" title="Saisonalität" style="font-size:13px;padding:6px 10px">📅</button>
     </div>
     <div class="tv-edit-row" id="tvEditRow">
       <input class="filter-input" id="tvEditInput" placeholder="z.B. XETR:SAP" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false"/>
@@ -3649,6 +3824,47 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
     <div class="ms-grid" id="mStats"></div>
   </div>
 </div>
+
+<!-- Saisonalitäts-Sheet -->
+<div class="modal-overlay" id="seasonOverlay" onclick="closeSeasonSheet(event)">
+  <div class="modal-sheet" id="seasonSheet" style="max-height:92vh;overflow-y:auto">
+    <div class="modal-handle"></div>
+    <div style="padding:0 14px 16px">
+      <div style="font-size:17px;font-weight:800;margin-bottom:4px">📅 Saisonalität</div>
+      <div style="font-size:13px;color:var(--muted);margin-bottom:16px" id="seasonSymLabel"></div>
+
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Zeitraum</div>
+      <div style="display:flex;gap:8px;margin-bottom:14px;align-items:center">
+        <select id="seasonFromMonth" class="filter-input" style="flex:1;padding:8px 10px">
+          <option value="0">Januar</option><option value="1">Februar</option><option value="2">März</option>
+          <option value="3">April</option><option value="4">Mai</option><option value="5">Juni</option>
+          <option value="6">Juli</option><option value="7">August</option><option value="8">September</option>
+          <option value="9">Oktober</option><option value="10">November</option><option value="11">Dezember</option>
+        </select>
+        <span style="color:var(--muted);font-size:13px">bis</span>
+        <select id="seasonToMonth" class="filter-input" style="flex:1;padding:8px 10px">
+          <option value="0">Januar</option><option value="1">Februar</option><option value="2">März</option>
+          <option value="3">April</option><option value="4">Mai</option><option value="5">Juni</option>
+          <option value="6">Juli</option><option value="7">August</option><option value="8">September</option>
+          <option value="9">Oktober</option><option value="10">November</option><option value="11" selected>Dezember</option>
+        </select>
+      </div>
+
+      <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:8px">Jahre</div>
+      <div style="display:flex;flex-wrap:wrap;gap:7px;margin-bottom:6px" id="seasonYearChips"></div>
+      <div style="display:flex;gap:8px;margin-bottom:16px;margin-top:8px">
+        <button onclick="seasonSelectAll()" style="flex:1;background:var(--surf2);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px;font-size:12px;cursor:pointer">Alle</button>
+        <button onclick="seasonSelectNone()" style="flex:1;background:var(--surf2);border:1px solid var(--border);color:var(--muted);border-radius:8px;padding:6px;font-size:12px;cursor:pointer">Keine</button>
+      </div>
+
+      <button class="load-btn" id="seasonLoadBtn" onclick="loadSeasonData()" style="margin-bottom:14px">⬇ Daten laden</button>
+      <div id="seasonStatus" style="font-size:12px;color:var(--muted);margin-bottom:10px;min-height:16px"></div>
+      <div id="seasonChart" style="width:100%;height:280px;display:none"></div>
+      <div id="seasonLegend" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div>
+    </div>
+  </div>
+</div>
+
 <!-- Filter Popup -->
 <div class="modal-overlay" id="filterPopupOverlay" onclick="closeFilterPopup(event)">
   <div class="modal-sheet" id="filterPopupSheet">
