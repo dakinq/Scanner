@@ -19,6 +19,12 @@ self.addEventListener('message', e => {
 });
 
 self.addEventListener('fetch', e => {
+  const url = e.request.url;
+  // Externe API-Anfragen (Yahoo, Firestore etc.) direkt durchleiten — kein SW-Caching
+  if (!url.startsWith(self.registration.scope)) {
+    e.respondWith(fetch(e.request));
+    return;
+  }
   e.respondWith(
     fetch(e.request).catch(() => caches.match(e.request))
   );
