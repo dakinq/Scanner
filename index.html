@@ -2902,38 +2902,50 @@ window.loadSeasonData = async () => {
   btn.textContent = 'Lädt…';
   document.getElementById('seasonStatus').textContent = '';
 
-  // Candles aus Yahoo laden — wir brauchen genug History
+  // Genug History laden — ab erstem Tag des frühesten gewählten Jahres
   const minYear = Math.min(...years);
   const period1 = Math.floor(new Date(minYear, fromM, 1).getTime() / 1000);
   const period2 = Math.floor(Date.now() / 1000);
 
+  const PROXIES = [
+    'https://corsproxy.io/?',
+    'https://api.allorigins.win/raw?url=',
+    'https://corsproxy.org/?',
+  ];
+
   let allCandles = [];
-  try {
-    const url = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(seasonSym)}?interval=1d&period1=${period1}&period2=${period2}&events=history`;
-    const resp = await fetch(url);
-    const json = await resp.json();
-    const res  = json?.chart?.result?.[0];
-    if (!res) throw new Error('Keine Daten');
-    const ts    = res.timestamp;
-    const q     = res.indicators.quote[0];
-    allCandles  = ts.map((t,i) => ({ time: t, close: q.close[i] })).filter(c => c.close != null);
-  } catch(e) {
-    document.getElementById('seasonStatus').textContent = '❌ Fehler beim Laden: ' + e.message;
+  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(seasonSym)}?interval=1d&period1=${period1}&period2=${period2}&events=history`;
+
+  let loaded = false;
+  for (const proxy of PROXIES) {
+    try {
+      const resp = await fetch(proxy + encodeURIComponent(yahooUrl), { signal: AbortSignal.timeout(20000) });
+      if (!resp.ok) continue;
+      const json = await resp.json();
+      const res  = json?.chart?.result?.[0];
+      if (!res) continue;
+      const ts = res.timestamp;
+      const q  = res.indicators.quote[0];
+      allCandles = ts.map((t,i) => ({ time: t, close: q.close[i] })).filter(c => c.close != null);
+      loaded = true;
+      break;
+    } catch(e) { continue; }
+  }
+
+  if (!loaded || !allCandles.length) {
+    document.getElementById('seasonStatus').textContent = '❌ Fehler beim Laden — alle Proxies fehlgeschlagen.';
     btn.disabled = false; btn.textContent = '⬇ Daten laden';
     return;
   }
 
-  // Pro Jahr: Kerzen im gewählten Monatsfenster filtern + normalisieren (Tag 1 = 0%)
-  // X-Achse: Handelstag-Index innerhalb des Fensters (0, 1, 2, ...)
+  // Pro Jahr: Kerzen im gewählten Monatsfenster + normalisieren (Tag 1 = 0%)
   const seriesData = [];
   for (const year of years) {
-    // Fenster: kann Jahresgrenze überschreiten (z.B. Okt–Feb)
     let start, end;
     if (fromM <= toM) {
       start = new Date(year,   fromM, 1);
-      end   = new Date(year,   toM + 1, 0); // letzter Tag des toM
+      end   = new Date(year,   toM + 1, 0);
     } else {
-      // z.B. Okt (9) bis Feb (1) → Jahresgrenze
       start = new Date(year,     fromM, 1);
       end   = new Date(year + 1, toM + 1, 0);
     }
@@ -2978,7 +2990,6 @@ window.loadSeasonData = async () => {
       priceLineVisible: false, lastValueVisible: false,
       title: String(year),
     });
-    // LightweightCharts braucht numerische time-Werte — wir nutzen den Index direkt
     line.setData(points.map(p => ({ time: p.x, value: p.y })));
   });
 
