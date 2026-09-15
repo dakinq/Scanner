@@ -2900,45 +2900,67 @@ window.loadSeasonData = async () => {
   const btn = document.getElementById('seasonLoadBtn');
   btn.disabled = true;
   btn.textContent = 'Lädt…';
-  document.getElementById('seasonStatus').textContent = '';
+  document.getElementById('seasonStatus').textContent = 'Verbinde…';
 
-  // Genug History laden — ab erstem Tag des frühesten gewählten Jahres
   const minYear = Math.min(...years);
   const period1 = Math.floor(new Date(minYear, fromM, 1).getTime() / 1000);
   const period2 = Math.floor(Date.now() / 1000);
 
-  const PROXIES = [
-    'https://corsproxy.io/?',
-    'https://api.allorigins.win/raw?url=',
-    'https://corsproxy.org/?',
-  ];
+  // Inline Blob-Worker — läuft außerhalb des SW, umgeht CORS-Blocking
+  const workerCode = `
+    const PROXIES = [
+      'https://corsproxy.io/?',
+      'https://api.allorigins.win/raw?url=',
+      'https://corsproxy.org/?',
+    ];
+    self.onmessage = async (e) => {
+      const { symbol, period1, period2 } = e.data;
+      const url = 'https://query1.finance.yahoo.com/v8/finance/chart/'
+        + encodeURIComponent(symbol)
+        + '?interval=1d&period1=' + period1 + '&period2=' + period2 + '&events=history';
+      for (const proxy of PROXIES) {
+        try {
+          const res = await fetch(proxy + encodeURIComponent(url), { signal: AbortSignal.timeout(25000) });
+          if (!res.ok) continue;
+          const json = await res.json();
+          const result = json?.chart?.result?.[0];
+          if (!result) continue;
+          const ts = result.timestamp;
+          const q  = result.indicators.quote[0];
+          const candles = ts.map((t,i) => ({ time: t, close: q.close[i] })).filter(c => c.close != null);
+          if (candles.length) { self.postMessage({ ok: true, candles }); return; }
+        } catch(e) { continue; }
+      }
+      self.postMessage({ ok: false, error: 'Alle Proxies fehlgeschlagen' });
+    };
+  `;
 
-  let allCandles = [];
-  const yahooUrl = `https://query1.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(seasonSym)}?interval=1d&period1=${period1}&period2=${period2}&events=history`;
+  const blob   = new Blob([workerCode], { type: 'application/javascript' });
+  const blobUrl = URL.createObjectURL(blob);
+  const worker  = new Worker(blobUrl);
 
-  let loaded = false;
-  for (const proxy of PROXIES) {
-    try {
-      const resp = await fetch(proxy + encodeURIComponent(yahooUrl), { signal: AbortSignal.timeout(20000) });
-      if (!resp.ok) continue;
-      const json = await resp.json();
-      const res  = json?.chart?.result?.[0];
-      if (!res) continue;
-      const ts = res.timestamp;
-      const q  = res.indicators.quote[0];
-      allCandles = ts.map((t,i) => ({ time: t, close: q.close[i] })).filter(c => c.close != null);
-      loaded = true;
-      break;
-    } catch(e) { continue; }
-  }
-
-  if (!loaded || !allCandles.length) {
-    document.getElementById('seasonStatus').textContent = '❌ Fehler beim Laden — alle Proxies fehlgeschlagen.';
+  const allCandles = await new Promise((resolve, reject) => {
+    worker.onmessage = e => {
+      worker.terminate();
+      URL.revokeObjectURL(blobUrl);
+      if (e.data.ok) resolve(e.data.candles);
+      else reject(new Error(e.data.error));
+    };
+    worker.onerror = err => {
+      worker.terminate();
+      URL.revokeObjectURL(blobUrl);
+      reject(err);
+    };
+    worker.postMessage({ symbol: seasonSym, period1, period2 });
+  }).catch(err => {
+    document.getElementById('seasonStatus').textContent = '❌ ' + (err.message || err);
     btn.disabled = false; btn.textContent = '⬇ Daten laden';
-    return;
-  }
+    return null;
+  });
 
-  // Pro Jahr: Kerzen im gewählten Monatsfenster + normalisieren (Tag 1 = 0%)
+  if (!allCandles) return;
+
+  // Pro Jahr: Kerzen im Monatsfenster filtern + normalisieren (Tag 1 = 0%)
   const seriesData = [];
   for (const year of years) {
     let start, end;
@@ -2995,7 +3017,6 @@ window.loadSeasonData = async () => {
 
   chart.timeScale().fitContent();
 
-  // Legende
   const legendEl = document.getElementById('seasonLegend');
   legendEl.innerHTML = seriesData.map(({ year }, idx) => {
     const color = SEASON_COLORS[idx % SEASON_COLORS.length];
