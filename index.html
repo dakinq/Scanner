@@ -2900,40 +2900,41 @@ window.loadSeasonData = async () => {
   const btn = document.getElementById('seasonLoadBtn');
   btn.disabled = true;
   btn.textContent = 'Lädt…';
-  document.getElementById('seasonStatus').textContent = 'Verbinde…';
+  const statusEl = document.getElementById('seasonStatus');
 
+  // Tage berechnen — ab erstem Tag des frühesten gewählten Jahres bis heute
   const minYear = Math.min(...years);
-  const period1 = Math.floor(new Date(minYear, fromM, 1).getTime() / 1000);
-  const period2 = Math.floor(Date.now() / 1000);
+  const p1 = Math.floor(new Date(minYear, fromM, 1).getTime() / 1000);
+  const p2 = Math.floor(Date.now() / 1000);
 
-  // Inline Blob-Worker — läuft außerhalb des SW, umgeht CORS-Blocking
+  statusEl.textContent = 'Verbinde…';
+
+  // Blob Worker — außerhalb des SW, nutzt CF Worker als Proxy
+  const cfUrl = CF_WORKER_URL;
   const workerCode = `
-    const PROXIES = [
-      'https://corsproxy.io/?',
-      'https://api.allorigins.win/raw?url=',
-      'https://corsproxy.org/?',
-    ];
     self.onmessage = async (e) => {
-      const { symbol, period1, period2 } = e.data;
-      const url = 'https://query1.finance.yahoo.com/v8/finance/chart/'
+      const { symbol, p1, p2, cfUrl } = e.data;
+      const yahooUrl = 'https://query1.finance.yahoo.com/v8/finance/chart/'
         + encodeURIComponent(symbol)
-        + '?interval=1d&period1=' + period1 + '&period2=' + period2 + '&events=history';
-      for (let i = 0; i < PROXIES.length; i++) {
-        self.postMessage({ progress: true, msg: 'Proxy ' + (i+1) + ' von 3 wird versucht…' });
-        try {
-          const res = await fetch(PROXIES[i] + encodeURIComponent(url), { signal: AbortSignal.timeout(25000) });
-          if (!res.ok) continue;
-          self.postMessage({ progress: true, msg: 'Daten empfangen, wird verarbeitet…' });
-          const json = await res.json();
-          const result = json?.chart?.result?.[0];
-          if (!result) continue;
-          const ts = result.timestamp;
-          const q  = result.indicators.quote[0];
-          const candles = ts.map((t,i) => ({ time: t, close: q.close[i] })).filter(c => c.close != null);
-          if (candles.length) { self.postMessage({ ok: true, candles }); return; }
-        } catch(e) { continue; }
+        + '?interval=1d&period1=' + p1 + '&period2=' + p2 + '&events=history';
+      try {
+        self.postMessage({ type: 'progress', msg: 'Lade Daten von Yahoo…' });
+        const res = await fetch(cfUrl + '?url=' + encodeURIComponent(yahooUrl), {
+          signal: AbortSignal.timeout(30000)
+        });
+        if (!res.ok) throw new Error('HTTP ' + res.status);
+        const json = await res.json();
+        if (json.error) throw new Error(json.error);
+        const result = json?.chart?.result?.[0];
+        if (!result) throw new Error('Keine Daten');
+        const ts = result.timestamp;
+        const q  = result.indicators.quote[0];
+        const candles = ts.map((t,i) => ({ time: t, close: q.close[i] })).filter(c => c.close != null);
+        if (!candles.length) throw new Error('Leere Candles');
+        self.postMessage({ type: 'done', candles });
+      } catch(err) {
+        self.postMessage({ type: 'error', error: err.message });
       }
-      self.postMessage({ ok: false, error: 'Alle Proxies fehlgeschlagen' });
     };
   `;
 
@@ -2941,44 +2942,30 @@ window.loadSeasonData = async () => {
   const blobUrl = URL.createObjectURL(blob);
   const worker  = new Worker(blobUrl);
 
-  // Progress-Anzeige
-  const statusEl = document.getElementById('seasonStatus');
-  let dots = 0;
-  const dotTimer = setInterval(() => {
-    const d = '.'.repeat((dots++ % 3) + 1);
-    const cur = statusEl.textContent.replace(/\.+$/, '');
-    statusEl.textContent = cur + d;
-  }, 500);
-
   const allCandles = await new Promise((resolve, reject) => {
     worker.onmessage = e => {
-      if (e.data.progress) {
-        dots = 0;
+      if (e.data.type === 'progress') {
         statusEl.textContent = e.data.msg;
         return;
       }
-      clearInterval(dotTimer);
       worker.terminate();
       URL.revokeObjectURL(blobUrl);
-      if (e.data.ok) resolve(e.data.candles);
+      if (e.data.type === 'done') resolve(e.data.candles);
       else reject(new Error(e.data.error));
     };
     worker.onerror = err => {
-      clearInterval(dotTimer);
       worker.terminate();
       URL.revokeObjectURL(blobUrl);
-      reject(err);
+      reject(new Error(err.message));
     };
-    worker.postMessage({ symbol: seasonSym, period1, period2 });
+    worker.postMessage({ symbol: seasonSym, p1, p2, cfUrl });
   }).catch(err => {
-    clearInterval(dotTimer);
-    statusEl.textContent = '❌ ' + (err.message || err);
+    statusEl.textContent = '❌ ' + err.message;
     btn.disabled = false; btn.textContent = '⬇ Daten laden';
     return null;
   });
 
   if (!allCandles) return;
-
   statusEl.textContent = `${allCandles.length} Kerzen geladen, wird aufbereitet…`;
 
   // Pro Jahr: Kerzen im Monatsfenster filtern + normalisieren (Tag 1 = 0%)
