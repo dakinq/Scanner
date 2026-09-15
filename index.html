@@ -2836,6 +2836,8 @@ const SEASON_COLORS = [
 let seasonSym = null;
 let seasonSelectedYears = new Set();
 let seasonChartInst = null;
+let seasonYearLines = {};
+let seasonAvgLine = null;
 
 window.openSeasonSheet = () => {
   seasonSym = modalSym;
@@ -2875,6 +2877,10 @@ window.openSeasonSheet = () => {
   document.getElementById('seasonStatus').textContent = '';
   document.getElementById('seasonChart').style.display = 'none';
   document.getElementById('seasonLegend').innerHTML = '';
+  document.getElementById('seasonAvgToggleWrap').style.display = 'none';
+  document.getElementById('seasonAvgToggle').checked = false;
+  document.getElementById('seasonPatternsWrap').style.display = 'none';
+  document.getElementById('seasonPatternsList').innerHTML = '';
   if (seasonChartInst) { try { seasonChartInst.remove(); } catch(e){} seasonChartInst = null; }
 
   document.getElementById('seasonOverlay').classList.add('visible');
@@ -2986,7 +2992,12 @@ window.loadSeasonData = async () => {
     const base = slice[0].close;
     seriesData.push({
       year,
-      points: slice.map((c, i) => ({ x: i, y: +((c.close / base - 1) * 100).toFixed(3) }))
+      points: slice.map((c, i) => ({ x: i, y: +((c.close / base - 1) * 100).toFixed(3) })),
+      // Kalenderdatum pro Tag-Index — genutzt für die Musteranzeige (12.3. statt "Tag 12")
+      dates: slice.map(c => {
+        const d = new Date(c.time * 1000);
+        return `${d.getDate()}.${d.getMonth()+1}.`;
+      }),
     });
   }
 
@@ -3013,6 +3024,8 @@ window.loadSeasonData = async () => {
   });
   seasonChartInst = chart;
 
+  // Jahreslinien zeichnen — Referenzen merken damit wir sie togglen können
+  seasonYearLines = {};
   seriesData.forEach(({ year, points }, idx) => {
     const color = SEASON_COLORS[idx % SEASON_COLORS.length];
     const line  = chart.addLineSeries({
@@ -3021,23 +3034,141 @@ window.loadSeasonData = async () => {
       title: String(year),
     });
     line.setData(points.map(p => ({ time: p.x, value: p.y })));
+    seasonYearLines[year] = { line, color, points, visible: true };
   });
+
+  // Durchschnittslinie berechnen (über alle Jahre, pro Tag-Index)
+  const maxLen = Math.max(...seriesData.map(s => s.points.length));
+  const avgPoints = [];
+  for (let i = 0; i < maxLen; i++) {
+    const vals = seriesData.map(s => s.points[i]?.y).filter(v => v != null);
+    if (vals.length) avgPoints.push({ x: i, y: +(vals.reduce((a,b)=>a+b,0) / vals.length).toFixed(3) });
+  }
+  seasonAvgLine = chart.addLineSeries({
+    color: '#ffffff', lineWidth: 3,
+    priceLineVisible: false, lastValueVisible: false,
+    title: 'Ø Durchschnitt', visible: false,
+  });
+  seasonAvgLine.setData(avgPoints.map(p => ({ time: p.x, value: p.y })));
 
   chart.timeScale().fitContent();
 
-  const legendEl = document.getElementById('seasonLegend');
-  legendEl.innerHTML = seriesData.map(({ year }, idx) => {
-    const color = SEASON_COLORS[idx % SEASON_COLORS.length];
-    return `<div style="display:flex;align-items:center;gap:4px;font-size:12px;color:var(--text)">
-      <div style="width:16px;height:3px;background:${color};border-radius:2px"></div>${year}</div>`;
-  }).join('');
+  // Legende — klickbar zum Ein-/Ausblenden
+  seasonRenderLegend();
+  document.getElementById('seasonAvgToggleWrap').style.display = 'flex';
 
   const monthNames = ['Jan','Feb','Mär','Apr','Mai','Jun','Jul','Aug','Sep','Okt','Nov','Dez'];
   document.getElementById('seasonStatus').textContent =
     `${seriesData.length} Jahre geladen · ${monthNames[fromM]}–${monthNames[toM]}`;
 
+  // Muster-Erkennung
+  seasonDetectPatterns(seriesData, minYear, fromM);
+
   btn.disabled = false; btn.textContent = '⬇ Daten laden';
 };
+
+function seasonRenderLegend() {
+  const legendEl = document.getElementById('seasonLegend');
+  legendEl.innerHTML = '';
+  Object.entries(seasonYearLines).forEach(([year, s]) => {
+    const chip = document.createElement('div');
+    chip.style.cssText = `display:flex;align-items:center;gap:5px;font-size:12px;padding:4px 8px;border-radius:14px;cursor:pointer;user-select:none;border:1px solid ${s.visible ? s.color : 'var(--border)'};background:${s.visible ? s.color+'18' : 'transparent'};color:${s.visible ? 'var(--text)' : 'var(--muted)'}`;
+    chip.innerHTML = `<div style="width:14px;height:3px;background:${s.visible ? s.color : 'var(--muted)'};border-radius:2px"></div>${year}`;
+    chip.onclick = () => {
+      s.visible = !s.visible;
+      s.line.applyOptions({ visible: s.visible });
+      seasonRenderLegend();
+    };
+    legendEl.appendChild(chip);
+  });
+}
+
+window.seasonToggleAvg = () => {
+  if (!seasonAvgLine) return;
+  const on = document.getElementById('seasonAvgToggle').checked;
+  seasonAvgLine.applyOptions({ visible: on });
+};
+
+// ── Muster-Erkennung ───────────────────────────────────────────────────────────
+// Sucht Tag-Fenster [start, end] bei denen die Richtung (steigend/fallend)
+// über möglichst viele Jahre übereinstimmt.
+function seasonDetectPatterns(seriesData, minYear, fromM) {
+  const wrap = document.getElementById('seasonPatternsWrap');
+  const list = document.getElementById('seasonPatternsList');
+  const nYears = seriesData.length;
+
+  if (nYears < 3) {
+    wrap.style.display = 'block';
+    list.innerHTML = '<div style="font-size:12px;color:var(--muted)">Mindestens 3 Jahre nötig für eine aussagekräftige Musteranalyse.</div>';
+    return;
+  }
+
+  const maxLen = Math.min(...seriesData.map(s => s.points.length));
+  const MIN_GAP   = 5;   // Mindestabstand zwischen Start/Ende
+  const STEP      = 3;   // Raster-Schrittweite (Performance)
+  const MIN_HITQ  = 0.65; // Mindest-Trefferquote
+
+  // Referenz-Jahr für Kalenderdaten: das mit den meisten Handelstagen im Fenster
+  const refSeries = seriesData.reduce((best, s) => s.dates.length > best.dates.length ? s : best, seriesData[0]);
+
+  const candidates = [];
+  for (let start = 0; start < maxLen - MIN_GAP; start += STEP) {
+    for (let end = start + MIN_GAP; end < maxLen; end += STEP) {
+      let up = 0, down = 0;
+      const changes = [];
+      for (const s of seriesData) {
+        const yStart = s.points[start]?.y;
+        const yEnd   = s.points[end]?.y;
+        if (yStart == null || yEnd == null) continue;
+        const diff = yEnd - yStart;
+        changes.push(diff);
+        if (diff > 0) up++; else if (diff < 0) down++;
+      }
+      const total = up + down;
+      if (total < nYears - 1) continue; // zu viele fehlende Jahre in diesem Fenster
+      const hits    = Math.max(up, down);
+      const hitRate = hits / total;
+      if (hitRate < MIN_HITQ) continue;
+      const avgChange = changes.reduce((a,b)=>a+b,0) / changes.length;
+      candidates.push({
+        start, end, hitRate, hits, total,
+        direction: up >= down ? 'up' : 'down', avgChange,
+        startDate: refSeries.dates[start] || `Tag ${start+1}`,
+        endDate:   refSeries.dates[end]   || `Tag ${end+1}`,
+      });
+    }
+  }
+
+  // Überlappende Fenster reduzieren: nach Trefferquote sortieren, dann greedy nicht-überlappend auswählen
+  candidates.sort((a,b) => b.hitRate - a.hitRate || Math.abs(b.avgChange) - Math.abs(a.avgChange));
+  const chosen = [];
+  for (const c of candidates) {
+    const overlaps = chosen.some(x => !(c.end < x.start - 3 || c.start > x.end + 3));
+    if (!overlaps) chosen.push(c);
+    if (chosen.length >= 8) break;
+  }
+
+  wrap.style.display = 'block';
+  if (!chosen.length) {
+    list.innerHTML = '<div style="font-size:12px;color:var(--muted)">Keine wiederkehrenden Muster gefunden (Trefferquote unter 65%).</div>';
+    return;
+  }
+
+  list.innerHTML = chosen.map(c => {
+    const arrow = c.direction === 'up' ? '↑' : '↓';
+    const color = c.direction === 'up' ? '#22c55e' : '#ef4444';
+    const pct   = Math.round(c.hitRate * 100);
+    const dateFrom = c.startDate || `Tag ${c.start+1}`;
+    const dateTo   = c.endDate   || `Tag ${c.end+1}`;
+    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;margin-bottom:8px">
+      <div style="font-size:13px;font-weight:600;color:var(--text)">${dateFrom} → ${dateTo}</div>
+      <div style="display:flex;align-items:center;gap:10px">
+        <div style="font-size:13px;font-weight:700;color:${color}">${arrow} ${pct}% <span style="font-weight:500;color:var(--muted);font-size:11px">(${c.hits}/${c.total})</span></div>
+        <div style="font-size:12px;color:${color};min-width:52px;text-align:right">Ø ${c.avgChange >= 0 ? '+' : ''}${c.avgChange.toFixed(1)}%</div>
+      </div>
+    </div>`;
+  }).join('');
+}
 
 
 
@@ -3901,6 +4032,16 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
       <div id="seasonStatus" style="font-size:12px;color:var(--muted);margin-bottom:10px;min-height:16px"></div>
       <div id="seasonChart" style="width:100%;height:280px;display:none"></div>
       <div id="seasonLegend" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div>
+
+      <label id="seasonAvgToggleWrap" style="display:none;align-items:center;gap:8px;margin-top:14px;font-size:13px;color:var(--text);cursor:pointer">
+        <input type="checkbox" id="seasonAvgToggle" onchange="seasonToggleAvg()" style="width:16px;height:16px">
+        Ø Durchschnittslinie anzeigen
+      </label>
+
+      <div id="seasonPatternsWrap" style="display:none;margin-top:20px">
+        <div style="font-size:10px;color:var(--muted);text-transform:uppercase;letter-spacing:.8px;margin-bottom:10px">📊 Erkannte Muster</div>
+        <div id="seasonPatternsList"></div>
+      </div>
     </div>
   </div>
 </div>
