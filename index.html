@@ -2975,6 +2975,9 @@ window.loadSeasonData = async () => {
   statusEl.textContent = `${allCandles.length} Kerzen geladen, wird aufbereitet…`;
 
   // Pro Jahr: Kerzen im Monatsfenster filtern + normalisieren (Tag 1 = 0%)
+  // x = Kalendertag-Offset seit Periodenstart (nicht Handelstag-Index!) —
+  // damit Jahre mit unterschiedlich vielen Handelstagen (Feiertage) am
+  // gleichen Kalendertag vergleichbar sind.
   const seriesData = [];
   for (const year of years) {
     let start, end;
@@ -2992,11 +2995,13 @@ window.loadSeasonData = async () => {
     const base = slice[0].close;
     seriesData.push({
       year,
-      points: slice.map((c, i) => ({ x: i, y: +((c.close / base - 1) * 100).toFixed(3) })),
-      // Kalenderdatum pro Tag-Index — genutzt für die Musteranzeige (12.3. statt "Tag 12")
-      dates: slice.map(c => {
-        const d = new Date(c.time * 1000);
-        return `${d.getDate()}.${d.getMonth()+1}.`;
+      points: slice.map(c => {
+        const dayOffset = Math.round((c.time - s) / 86400);
+        return {
+          x: dayOffset,
+          y: +((c.close / base - 1) * 100).toFixed(3),
+          date: `${new Date(c.time*1000).getDate()}.${new Date(c.time*1000).getMonth()+1}.`,
+        };
       }),
     });
   }
@@ -3013,18 +3018,40 @@ window.loadSeasonData = async () => {
   chartEl.style.display = 'block';
   if (seasonChartInst) { try { seasonChartInst.remove(); } catch(e){} }
 
+  // Neutrales Referenzjahr für die X-Achse (Schaltjahr, damit 29. Feb nie fehlt).
+  // Tag-Offset i → echter Timestamp = fromM/1 dieses Jahres + i Tage.
+  // So zeigt das Fadenkreuz ein echtes Datum statt 1970.
+  const REF_YEAR = 2020;
+  const refStart = Math.floor(new Date(REF_YEAR, fromM, 1).getTime() / 1000);
+  const offsetToTime = (dayOffset) => refStart + dayOffset * 86400;
+
   const chart = LightweightCharts.createChart(chartEl, {
     width:  chartEl.clientWidth || window.innerWidth - 28,
     height: 280,
     layout: { background: { color: 'transparent' }, textColor: '#64748b' },
     grid:   { vertLines: { visible: false }, horzLines: { color: '#1e293b' } },
     rightPriceScale: { borderVisible: false },
-    timeScale: { borderVisible: false, tickMarkFormatter: v => `T${v+1}` },
+    timeScale: {
+      borderVisible: false,
+      tickMarkFormatter: (time) => {
+        const d = new Date(time * 1000);
+        return `${d.getDate()}.${d.getMonth()+1}.`;
+      },
+    },
+    localization: {
+      timeFormatter: (time) => {
+        const d = new Date(time * 1000);
+        return `${d.getDate()}.${d.getMonth()+1}.`;
+      },
+    },
     crosshair: { mode: LightweightCharts.CrosshairMode.Magnet },
   });
   seasonChartInst = chart;
 
-  // Jahreslinien zeichnen — Referenzen merken damit wir sie togglen können
+  // Jahreslinien zeichnen — x-Werte auf gemeinsame Referenz-Zeitachse gemappt.
+  // Mehrfache Punkte am selben Tag-Offset (sollte nicht vorkommen, aber
+  // sicherheitshalber) werden dedupliziert — LightweightCharts verlangt
+  // strikt aufsteigende Zeiten ohne Duplikate.
   seasonYearLines = {};
   seriesData.forEach(({ year, points }, idx) => {
     const color = SEASON_COLORS[idx % SEASON_COLORS.length];
@@ -3033,23 +3060,37 @@ window.loadSeasonData = async () => {
       priceLineVisible: false, lastValueVisible: false,
       title: String(year),
     });
-    line.setData(points.map(p => ({ time: p.x, value: p.y })));
+    const seen = new Set();
+    const data = [];
+    for (const p of points) {
+      const t = offsetToTime(p.x);
+      if (seen.has(t)) continue;
+      seen.add(t);
+      data.push({ time: t, value: p.y });
+    }
+    line.setData(data);
     seasonYearLines[year] = { line, color, points, visible: true };
   });
 
-  // Durchschnittslinie berechnen (über alle Jahre, pro Tag-Index)
-  const maxLen = Math.max(...seriesData.map(s => s.points.length));
+  // Durchschnittslinie: nur bis zur kürzesten gemeinsamen Länge (Tag-Offset),
+  // damit gegen Ende nicht nur noch 1-2 Ausreißer-Jahre den Mittelwert verzerren
+  // und einen künstlichen Knick erzeugen.
+  const minMaxOffset = Math.min(...seriesData.map(s => s.points[s.points.length-1].x));
   const avgPoints = [];
-  for (let i = 0; i < maxLen; i++) {
-    const vals = seriesData.map(s => s.points[i]?.y).filter(v => v != null);
-    if (vals.length) avgPoints.push({ x: i, y: +(vals.reduce((a,b)=>a+b,0) / vals.length).toFixed(3) });
+  for (let dayOffset = 0; dayOffset <= minMaxOffset; dayOffset++) {
+    const vals = seriesData
+      .map(s => s.points.find(p => p.x === dayOffset)?.y)
+      .filter(v => v != null);
+    if (vals.length === seriesData.length) { // nur wenn ALLE Jahre einen Wert haben
+      avgPoints.push({ x: dayOffset, y: +(vals.reduce((a,b)=>a+b,0) / vals.length).toFixed(3) });
+    }
   }
   seasonAvgLine = chart.addLineSeries({
     color: '#ffffff', lineWidth: 3,
     priceLineVisible: false, lastValueVisible: false,
     title: 'Ø Durchschnitt', visible: false,
   });
-  seasonAvgLine.setData(avgPoints.map(p => ({ time: p.x, value: p.y })));
+  seasonAvgLine.setData(avgPoints.map(p => ({ time: offsetToTime(p.x), value: p.y })));
 
   chart.timeScale().fitContent();
 
@@ -3103,24 +3144,41 @@ function seasonDetectPatterns(seriesData, minYear, fromM) {
     return;
   }
 
-  const maxLen = Math.min(...seriesData.map(s => s.points.length));
-  const MIN_GAP   = 5;   // Mindestabstand zwischen Start/Ende
-  const STEP      = 3;   // Raster-Schrittweite (Performance)
-  const MIN_HITQ  = 0.65; // Mindest-Trefferquote
+  // Wert an einem bestimmten Kalendertag-Offset holen — fällt auf den
+  // nächstgelegenen verfügbaren Handelstag zurück (±2 Tage, für Feiertage/Wochenende).
+  // Ohne diesen Fallback würde ein exakter Index-Zugriff bei fehlenden Tagen
+  // falsche Werte vergleichen (Ursache des früheren 100%-Bugs).
+  function valueAt(series, dayOffset) {
+    let best = null, bestDist = Infinity;
+    for (const p of series.points) {
+      const dist = Math.abs(p.x - dayOffset);
+      if (dist < bestDist) { bestDist = dist; best = p; }
+    }
+    return bestDist <= 2 ? best : null;
+  }
 
-  // Referenz-Jahr für Kalenderdaten: das mit den meisten Handelstagen im Fenster
-  const refSeries = seriesData.reduce((best, s) => s.dates.length > best.dates.length ? s : best, seriesData[0]);
+  const maxOffset = Math.max(...seriesData.map(s => s.points[s.points.length-1].x));
+  const MIN_GAP  = 5;    // Mindestabstand zwischen Start/Ende (Kalendertage)
+  const STEP     = 3;    // Raster-Schrittweite (Performance)
+  const MIN_HITQ = 0.65; // Mindest-Trefferquote
+
+  // Referenz-Jahr für Kalenderdaten: das mit den meisten Punkten (deckt Zeitraum am besten ab)
+  const refSeries = seriesData.reduce((best, s) => s.points.length > best.points.length ? s : best, seriesData[0]);
+  const dateAt = (dayOffset) => {
+    const p = valueAt(refSeries, dayOffset);
+    return p ? p.date : `Tag ${dayOffset+1}`;
+  };
 
   const candidates = [];
-  for (let start = 0; start < maxLen - MIN_GAP; start += STEP) {
-    for (let end = start + MIN_GAP; end < maxLen; end += STEP) {
+  for (let start = 0; start < maxOffset - MIN_GAP; start += STEP) {
+    for (let end = start + MIN_GAP; end <= maxOffset; end += STEP) {
       let up = 0, down = 0;
       const changes = [];
       for (const s of seriesData) {
-        const yStart = s.points[start]?.y;
-        const yEnd   = s.points[end]?.y;
-        if (yStart == null || yEnd == null) continue;
-        const diff = yEnd - yStart;
+        const pStart = valueAt(s, start);
+        const pEnd   = valueAt(s, end);
+        if (!pStart || !pEnd) continue;
+        const diff = pEnd.y - pStart.y;
         changes.push(diff);
         if (diff > 0) up++; else if (diff < 0) down++;
       }
@@ -3133,8 +3191,8 @@ function seasonDetectPatterns(seriesData, minYear, fromM) {
       candidates.push({
         start, end, hitRate, hits, total,
         direction: up >= down ? 'up' : 'down', avgChange,
-        startDate: refSeries.dates[start] || `Tag ${start+1}`,
-        endDate:   refSeries.dates[end]   || `Tag ${end+1}`,
+        startDate: dateAt(start),
+        endDate:   dateAt(end),
       });
     }
   }
@@ -3158,10 +3216,8 @@ function seasonDetectPatterns(seriesData, minYear, fromM) {
     const arrow = c.direction === 'up' ? '↑' : '↓';
     const color = c.direction === 'up' ? '#22c55e' : '#ef4444';
     const pct   = Math.round(c.hitRate * 100);
-    const dateFrom = c.startDate || `Tag ${c.start+1}`;
-    const dateTo   = c.endDate   || `Tag ${c.end+1}`;
     return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;margin-bottom:8px">
-      <div style="font-size:13px;font-weight:600;color:var(--text)">${dateFrom} → ${dateTo}</div>
+      <div style="font-size:13px;font-weight:600;color:var(--text)">${c.startDate} → ${c.endDate}</div>
       <div style="display:flex;align-items:center;gap:10px">
         <div style="font-size:13px;font-weight:700;color:${color}">${arrow} ${pct}% <span style="font-weight:500;color:var(--muted);font-size:11px">(${c.hits}/${c.total})</span></div>
         <div style="font-size:12px;color:${color};min-width:52px;text-align:right">Ø ${c.avgChange >= 0 ? '+' : ''}${c.avgChange.toFixed(1)}%</div>
