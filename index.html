@@ -2838,6 +2838,9 @@ let seasonSelectedYears = new Set();
 let seasonChartInst = null;
 let seasonYearLines = {};
 let seasonAvgLine = null;
+let seasonOffsetToTime = null; // gemerkt für Muster-Klick-Highlight
+let seasonHighlightEl = null;
+let seasonHighlightRange = null; // {start, end} — für Reposition bei Zoom/Scroll
 
 window.openSeasonSheet = () => {
   seasonSym = modalSym;
@@ -2881,6 +2884,8 @@ window.openSeasonSheet = () => {
   document.getElementById('seasonAvgToggle').checked = false;
   document.getElementById('seasonPatternsWrap').style.display = 'none';
   document.getElementById('seasonPatternsList').innerHTML = '';
+  seasonHighlightRange = null;
+  if (seasonHighlightEl) { seasonHighlightEl.remove(); seasonHighlightEl = null; }
   if (seasonChartInst) { try { seasonChartInst.remove(); } catch(e){} seasonChartInst = null; }
 
   document.getElementById('seasonOverlay').classList.add('visible');
@@ -3015,6 +3020,8 @@ window.loadSeasonData = async () => {
   // Chart zeichnen
   const chartEl = document.getElementById('seasonChart');
   chartEl.innerHTML = '';
+  seasonHighlightEl = null;
+  seasonHighlightRange = null;
   chartEl.style.display = 'block';
   if (seasonChartInst) { try { seasonChartInst.remove(); } catch(e){} }
 
@@ -3024,6 +3031,7 @@ window.loadSeasonData = async () => {
   const REF_YEAR = 2020;
   const refStart = Math.floor(new Date(REF_YEAR, fromM, 1).getTime() / 1000);
   const offsetToTime = (dayOffset) => refStart + dayOffset * 86400;
+  seasonOffsetToTime = offsetToTime;
 
   const chart = LightweightCharts.createChart(chartEl, {
     width:  chartEl.clientWidth || window.innerWidth - 28,
@@ -3093,6 +3101,7 @@ window.loadSeasonData = async () => {
   seasonAvgLine.setData(avgPoints.map(p => ({ time: offsetToTime(p.x), value: p.y })));
 
   chart.timeScale().fitContent();
+  chart.timeScale().subscribeVisibleTimeRangeChange(seasonRepositionHighlight);
 
   // Legende — klickbar zum Ein-/Ausblenden
   seasonRenderLegend();
@@ -3212,11 +3221,12 @@ function seasonDetectPatterns(seriesData, minYear, fromM) {
     return;
   }
 
-  list.innerHTML = chosen.map(c => {
+  list.innerHTML = chosen.map((c, idx) => {
     const arrow = c.direction === 'up' ? '↑' : '↓';
     const color = c.direction === 'up' ? '#22c55e' : '#ef4444';
     const pct   = Math.round(c.hitRate * 100);
-    return `<div style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;margin-bottom:8px">
+    return `<div class="season-pattern-item" data-idx="${idx}" onclick="seasonHighlightPattern(${c.start},${c.end})"
+      style="display:flex;align-items:center;justify-content:space-between;padding:10px 12px;background:var(--surf2);border:1px solid var(--border);border-radius:10px;margin-bottom:8px;cursor:pointer">
       <div style="font-size:13px;font-weight:600;color:var(--text)">${c.startDate} → ${c.endDate}</div>
       <div style="display:flex;align-items:center;gap:10px">
         <div style="font-size:13px;font-weight:700;color:${color}">${arrow} ${pct}% <span style="font-weight:500;color:var(--muted);font-size:11px">(${c.hits}/${c.total})</span></div>
@@ -3224,6 +3234,38 @@ function seasonDetectPatterns(seriesData, minYear, fromM) {
       </div>
     </div>`;
   }).join('');
+}
+
+// ── Muster-Highlight im Chart ──────────────────────────────────────────────────
+// Zeichnet einen halbtransparenten vertikalen Balken über den gewählten
+// Zeitraum, so breit wie das Muster-Fenster und so hoch wie der Chart.
+window.seasonHighlightPattern = (startOffset, endOffset) => {
+  seasonHighlightRange = { start: startOffset, end: endOffset };
+  seasonRepositionHighlight();
+
+  // Aktiven Muster-Eintrag optisch hervorheben
+  document.querySelectorAll('.season-pattern-item').forEach(it => it.style.borderColor = 'var(--border)');
+  event?.currentTarget && (event.currentTarget.style.borderColor = 'var(--cyan)');
+};
+
+function seasonRepositionHighlight() {
+  if (!seasonChartInst || !seasonOffsetToTime || !seasonHighlightRange) return;
+  const chartEl = document.getElementById('seasonChart');
+
+  if (seasonHighlightEl) { seasonHighlightEl.remove(); seasonHighlightEl = null; }
+
+  const timeScale = seasonChartInst.timeScale();
+  const xStart = timeScale.timeToCoordinate(seasonOffsetToTime(seasonHighlightRange.start));
+  const xEnd   = timeScale.timeToCoordinate(seasonOffsetToTime(seasonHighlightRange.end));
+  if (xStart == null || xEnd == null) return;
+
+  const left  = Math.min(xStart, xEnd);
+  const width = Math.abs(xEnd - xStart);
+
+  const el = document.createElement('div');
+  el.style.cssText = `position:absolute;top:0;left:${left}px;width:${width}px;height:100%;background:rgba(6,182,212,0.18);border-left:1px solid rgba(6,182,212,0.6);border-right:1px solid rgba(6,182,212,0.6);pointer-events:none;z-index:1;transition:opacity .2s`;
+  chartEl.appendChild(el);
+  seasonHighlightEl = el;
 }
 
 
@@ -4086,7 +4128,7 @@ header{position:sticky;top:0;z-index:100;background:rgba(8,12,20,.93);backdrop-f
 
       <button class="load-btn" id="seasonLoadBtn" onclick="loadSeasonData()" style="margin-bottom:14px">⬇ Daten laden</button>
       <div id="seasonStatus" style="font-size:12px;color:var(--muted);margin-bottom:10px;min-height:16px"></div>
-      <div id="seasonChart" style="width:100%;height:280px;display:none"></div>
+      <div id="seasonChart" style="width:100%;height:280px;display:none;position:relative"></div>
       <div id="seasonLegend" style="display:flex;flex-wrap:wrap;gap:6px;margin-top:10px"></div>
 
       <label id="seasonAvgToggleWrap" style="display:none;align-items:center;gap:8px;margin-top:14px;font-size:13px;color:var(--text);cursor:pointer">
