@@ -2692,11 +2692,17 @@ function buildModalChart(months) {
   });
   cs.setData(candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
   const cl = candles.map(c=>c.close);
-  [[20,'#06b6d4'],[50,'#3b82f6'],[200,'#a855f7']].forEach(([p,col])=>{
+  // EMA 10/50/200 — passend zu den EMA-basierten Filtern (statt einfacher MA)
+  [[10,'#06b6d4'],[50,'#3b82f6'],[200,'#a855f7']].forEach(([p,col])=>{
     if(cl.length<p) return;
     const ln=chart.addLineSeries({color:col,lineWidth:1,priceLineVisible:false,lastValueVisible:false});
-    const d=[];
-    for(let i=p-1;i<candles.length;i++) d.push({time:candles[i].time,value:cl.slice(i-p+1,i+1).reduce((a,b)=>a+b,0)/p});
+    const k = 2/(p+1);
+    let ema = cl.slice(0,p).reduce((a,b)=>a+b,0)/p;
+    const d=[{time:candles[p-1].time,value:ema}];
+    for(let i=p;i<candles.length;i++){
+      ema = cl[i]*k + ema*(1-k);
+      d.push({time:candles[i].time,value:ema});
+    }
     ln.setData(d);
   });
   chart.timeScale().fitContent();
