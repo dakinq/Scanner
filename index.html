@@ -2229,6 +2229,38 @@ function detectElliottWave(candles, waveLabel, days) {
   return true;
 }
 
+// Cache für kompilierte Filter-Ausdrücke: new Function() ist teuer (Parsen + Kompilieren),
+// der Ausdrucks-String selbst ändert sich pro Scan aber nicht — nur die Werte (m, candles).
+// Ohne Cache wird bei 3000 Aktien × mehreren Filtern der gleiche String tausendfach neu kompiliert.
+const _exprFnCache = new Map();
+function compileExpr(expr) {
+  let fn = _exprFnCache.get(expr);
+  if (fn) return fn;
+  fn = new Function(
+    'close','open','high','low','volume',
+    'rsi','high52w','low52w',
+    'ma','ema','change','range',
+    'avgvol','rvol','abovema',
+    'macd','signal',
+    'atr','bb_upper','bb_lower',
+    'gap','body',
+    'wave','fib_retracement','fib_extension',
+    'squeeze','breakout','doji','hammer','engulfing',
+    'consec','nearma','trend','rs',
+    'interday','insidebar',
+    'minClose','maxClose',
+    `return !!(${expr})`
+  );
+  // Cache-Größe begrenzen — bei sehr vielen unterschiedlichen Ad-hoc-Ausdrücken
+  // (z.B. während der Nutzer im Filter-Editor tippt und testet) nicht unbegrenzt wachsen
+  if (_exprFnCache.size >= 200) {
+    const oldestKey = _exprFnCache.keys().next().value;
+    _exprFnCache.delete(oldestKey);
+  }
+  _exprFnCache.set(expr, fn);
+  return fn;
+}
+
 function evalExpr(expr, m, candles) {
   try {
     const cl = candles.map(c => c.close);
@@ -2454,21 +2486,7 @@ function evalExpr(expr, m, candles) {
       return slice.length ? Math.max(...slice) : null;
     };
 
-    return !!(new Function(
-      'close','open','high','low','volume',
-      'rsi','high52w','low52w',
-      'ma','ema','change','range',
-      'avgvol','rvol','abovema',
-      'macd','signal',
-      'atr','bb_upper','bb_lower',
-      'gap','body',
-      'wave','fib_retracement','fib_extension',
-      'squeeze','breakout','doji','hammer','engulfing',
-      'consec','nearma','trend','rs',
-      'interday','insidebar',
-      'minClose','maxClose',
-      `return !!(${expr})`
-    )(
+    return !!(compileExpr(expr)(
       closeProxy, m.open, m.high, m.low, m.volume,
       m.rsi, m.high52w, m.low52w,
       maFunc, emaFunc, changeFunc, rangeFunc,
