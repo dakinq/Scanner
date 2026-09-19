@@ -2691,17 +2691,22 @@ function buildModalChart(months) {
     wickUpColor:'#22c55e',wickDownColor:'#ef4444',
   });
   cs.setData(candles.map(c=>({time:c.time,open:c.open,high:c.high,low:c.low,close:c.close})));
-  const cl = candles.map(c=>c.close);
-  // EMA 10/50/200 — passend zu den EMA-basierten Filtern (statt einfacher MA)
+
+  // EMA 10/50/200 — MUSS über die VOLLE geladene Historie berechnet werden
+  // (nicht nur den sichtbaren Zeitraum), sonst weicht der Seed-Startpunkt vom
+  // Filter-EMA ab und die Linie zeigt andere Werte als der Filter tatsächlich nutzt.
+  const allCl = modalCandles.map(c=>c.close);
+  const visibleStartIdx = modalCandles.findIndex(c => c.time >= cutoff);
   [[10,'#06b6d4'],[50,'#3b82f6'],[200,'#a855f7']].forEach(([p,col])=>{
-    if(cl.length<p) return;
+    if(allCl.length<p) return;
     const ln=chart.addLineSeries({color:col,lineWidth:1,priceLineVisible:false,lastValueVisible:false});
     const k = 2/(p+1);
-    let ema = cl.slice(0,p).reduce((a,b)=>a+b,0)/p;
-    const d=[{time:candles[p-1].time,value:ema}];
-    for(let i=p;i<candles.length;i++){
-      ema = cl[i]*k + ema*(1-k);
-      d.push({time:candles[i].time,value:ema});
+    let ema = allCl.slice(0,p).reduce((a,b)=>a+b,0)/p;
+    const d=[];
+    if (p-1 >= visibleStartIdx) d.push({time:modalCandles[p-1].time,value:ema});
+    for(let i=p;i<allCl.length;i++){
+      ema = allCl[i]*k + ema*(1-k);
+      if (i >= visibleStartIdx) d.push({time:modalCandles[i].time,value:ema});
     }
     ln.setData(d);
   });
