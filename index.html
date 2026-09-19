@@ -2697,19 +2697,65 @@ function buildModalChart(months) {
   // Filter-EMA ab und die Linie zeigt andere Werte als der Filter tatsächlich nutzt.
   const allCl = modalCandles.map(c=>c.close);
   const visibleStartIdx = modalCandles.findIndex(c => c.time >= cutoff);
+  const emaByTime = {}; // time -> {10: val, 50: val, 200: val} — für den Tooltip
   [[10,'#06b6d4'],[50,'#3b82f6'],[200,'#a855f7']].forEach(([p,col])=>{
     if(allCl.length<p) return;
     const ln=chart.addLineSeries({color:col,lineWidth:1,priceLineVisible:false,lastValueVisible:false});
     const k = 2/(p+1);
     let ema = allCl.slice(0,p).reduce((a,b)=>a+b,0)/p;
     const d=[];
-    if (p-1 >= visibleStartIdx) d.push({time:modalCandles[p-1].time,value:ema});
+    if (p-1 >= visibleStartIdx) {
+      d.push({time:modalCandles[p-1].time,value:ema});
+      (emaByTime[modalCandles[p-1].time] ??= {})[p] = ema;
+    }
     for(let i=p;i<allCl.length;i++){
       ema = allCl[i]*k + ema*(1-k);
-      if (i >= visibleStartIdx) d.push({time:modalCandles[i].time,value:ema});
+      if (i >= visibleStartIdx) {
+        d.push({time:modalCandles[i].time,value:ema});
+        (emaByTime[modalCandles[i].time] ??= {})[p] = ema;
+      }
     }
     ln.setData(d);
   });
+
+  // Eigener Tooltip: zeigt Datum, Close und alle EMA-Werte an der Crosshair-Position —
+  // der eingebaute Tooltip von LightweightCharts zeigt nur den Kurs, keine EMA-Werte.
+  const candleByTime = {};
+  candles.forEach(c => { candleByTime[c.time] = c; });
+
+  const tooltipEl = document.createElement('div');
+  tooltipEl.style.cssText = 'position:absolute;display:none;pointer-events:none;z-index:10;background:rgba(15,22,35,.96);border:1px solid var(--border);border-radius:8px;padding:8px 10px;font-size:11.5px;line-height:1.6;color:var(--text);white-space:nowrap;box-shadow:0 4px 16px rgba(0,0,0,.4)';
+  el.style.position = 'relative';
+  el.appendChild(tooltipEl);
+
+  chart.subscribeCrosshairMove(param => {
+    if (!param.time || !param.point || param.point.x < 0 || param.point.y < 0) {
+      tooltipEl.style.display = 'none';
+      return;
+    }
+    const c = candleByTime[param.time];
+    if (!c) { tooltipEl.style.display = 'none'; return; }
+    const ema = emaByTime[param.time] || {};
+    const fmt = v => v != null ? v.toFixed(2) : '–';
+    const d = new Date(param.time * 1000);
+    const dateStr = `${d.getDate()}.${d.getMonth()+1}.${d.getFullYear()}`;
+
+    tooltipEl.innerHTML =
+      `<div style="font-weight:700;margin-bottom:4px">${dateStr}</div>` +
+      `<div>Close: <b>${fmt(c.close)}</b></div>` +
+      `<div style="color:#06b6d4">EMA10: ${fmt(ema[10])}</div>` +
+      `<div style="color:#3b82f6">EMA50: ${fmt(ema[50])}</div>` +
+      `<div style="color:#a855f7">EMA200: ${fmt(ema[200])}</div>`;
+
+    tooltipEl.style.display = 'block';
+    const chartWidth = el.clientWidth || window.innerWidth;
+    const tooltipWidth = 130;
+    let left = param.point.x + 12;
+    if (left + tooltipWidth > chartWidth) left = param.point.x - tooltipWidth - 12;
+    tooltipEl.style.left = left + 'px';
+    tooltipEl.style.top = '8px';
+  });
+
   chart.timeScale().fitContent();
   modalChartInst = chart;
 }
